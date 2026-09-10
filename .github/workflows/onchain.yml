@@ -1,0 +1,48 @@
+name: onchain
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "onchain/**"
+      - ".github/workflows/onchain.yml"
+  pull_request:
+    paths:
+      - "onchain/**"
+      - ".github/workflows/onchain.yml"
+
+defaults:
+  run:
+    working-directory: onchain
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            onchain/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('onchain/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: Build (wasm32v1-none, release)
+        run: cargo build --target wasm32v1-none --release
+
+      - name: cargo test
+        run: cargo test --workspace
