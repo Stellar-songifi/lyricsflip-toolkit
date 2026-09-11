@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Repository } from 'typeorm';
 import { Wager, WagerStatus } from './entities/wager.entity';
 import { UsersService } from '../users/users.service';
@@ -28,6 +29,7 @@ export class WagerService {
     private readonly wagersRepository: Repository<Wager>,
     private readonly usersService: UsersService,
     private readonly stellarService: StellarService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async createWager(
@@ -96,6 +98,11 @@ export class WagerService {
 
   async settle(wagerId: string, winnerId: string): Promise<Wager> {
     const wager = await this.findById(wagerId);
+    if (wager.status === WagerStatus.WON && wager.winnerId === winnerId) {
+      // Both players in a match may race to call settle — treat a repeat
+      // call with the same winner as a no-op rather than an error.
+      return wager;
+    }
     if (wager.status !== WagerStatus.STAKED) {
       throw new BadRequestException(`Wager ${wagerId} is not staked`);
     }
@@ -116,7 +123,16 @@ export class WagerService {
       const txHash = await this.stellarService.resolve(wager.id, winner.walletAddress);
       wager.status = WagerStatus.WON;
       wager.settlementTxHash = txHash;
-      return this.wagersRepository.save(wager);
+      const saved = await this.wagersRepository.save(wager);
+
+      const loserId = winnerId === wager.playerAId ? wager.playerBId : wager.playerAId;
+      this.eventEmitter.emit('wager.settled', {
+        winnerId,
+        loserId,
+        stakeAmount: wager.stakeAmount,
+      });
+
+      return saved;
     } catch (err) {
       // Left in `settling` with whatever we know — an admin reconciles this
       // against the ledger rather than guessing at the outcome.

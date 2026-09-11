@@ -57,12 +57,12 @@ LyricsFlip is under active development. This table reflects what is in the code,
 | Solo play and fuzzy scoring                              | `backend`                    | Implemented                                                    |
 | Shared rooms                                             | `backend`                    | Implemented                                                    |
 | XP, levels and leaderboard (`GET /users/leaderboard`)    | `backend`                    | Implemented                                                    |
-| SEP-10 wallet login                                      | `backend`                    | Implemented server-side; not yet wired into the frontend       |
-| Head-to-head wagers with escrow                          | `backend`, `onchain`         | Implemented server-side; frontend staking flow not yet wired   |
+| SEP-10 wallet login                                      | `backend`, `frontend`        | Implemented end-to-end                                         |
+| Invite codes for challenges                              | `backend`, `frontend`        | Implemented — a short code carries an optional stake           |
+| Head-to-head wagers with escrow                          | `backend`, `frontend`, `onchain` | Implemented in `mock` settlement mode; `stellar` mode's contract calls are still a stub — see [`backend/src/modules/stellar/stellar.service.ts`](backend/src/modules/stellar/stellar.service.ts) |
 | On-chain rounds, cards and answers                       | `onchain/lyricsflip`         | Implemented; the round's wager amount is always 0              |
 | NFT rewards                                              | `onchain/lyricsflip-nft`     | Contract implemented; nothing mints yet                        |
-| Invite codes for challenges                              | `frontend`                   | UI exists; no matching backend endpoint                        |
-| Notifications                                            | `backend`                    | In-memory only; cleared on restart                             |
+| Notifications                                            | `backend`                    | Persisted to Postgres; no push delivery, polling only           |
 | Confetti on a correct guess                              | `frontend`                   | Not implemented                                                |
 
 See [Known gaps](#known-gaps) for the detail behind each partial item.
@@ -265,23 +265,25 @@ The frontend has no CI job yet.
 
 Good first issues, all checked against the code.
 
-**Frontend ↔ backend integration**
+**Settlement**
 
-- The frontend doesn't yet call the backend's wallet-auth (`/auth/stellar/*`), game-session or staking endpoints.
-- The Socket.IO client connects to a hardcoded `ws://localhost:3000` and emits `player_join`. The backend gateway lives on the `/game` namespace and handles `requestLyric`, `submitGuess` and `getSession`.
-- In the browser, `stellarConfig.ts` reads settings from `window.__ENV`, but nothing sets `window.__ENV`. Client-side code therefore gets the testnet defaults and empty contract IDs regardless of `.env.local`.
-- `backend/src/main.ts` calls `app.enableCors()` after `app.listen()`. CORS middleware is normally registered before listening, so cross-origin requests from the frontend may be rejected until that call is moved up.
+- `STELLAR_SETTLEMENT_MODE=stellar` is a stub — [`stellar.service.ts`](backend/src/modules/stellar/stellar.service.ts)'s `openPot`/`resolve`/`refund` throw "not implemented yet" outside of `mock` mode. The wager state machine, challenge flow and `lyricsflip-escrow` contract are all in place; what's missing is the `@stellar/stellar-sdk` code in `stellar.service.ts` that builds and submits the actual Soroban invocations against `STELLAR_ESCROW_CONTRACT_ID`.
+- Settling a finished head-to-head match is triggered by whichever client's socket sees `sessionStatus: 'finished'` first, not by a single authoritative server-pushed event — the backend's idempotent `settle` (a repeat call with the same winner is a no-op) covers the resulting race, but a cleaner design would have the backend call `settle` itself once a session finishes.
 
 **Contracts**
 
-- `lyricsflip-nft` only lets its minter mint, and the `lyricsflip` game contract never calls `mint`, so reward NFTs can't be issued until either the game contract mints or a backend key is made the minter.
-- `lyricsflip` stores a `wager_amount` on each round but always sets it to 0 and moves no tokens. Real stakes go through `lyricsflip-escrow`.
+- `lyricsflip-nft` only lets its minter mint, and nothing — not the `lyricsflip` game contract, not the backend — ever calls `mint`, so reward NFTs can't be issued yet.
+- `lyricsflip` (the onchain contract) stores a `wager_amount` on each round but always sets it to 0 and moves no tokens. Real stakes go through `lyricsflip-escrow` via the backend's wager/challenge flow instead.
+
+**Frontend**
+
+- No confetti (or any celebration) on a correct guess.
+- No test suite runs in CI yet; `npm test` works locally (`frontend/`).
 
 **Backend**
 
-- There is no endpoint behind the frontend's challenge invite codes.
-- Notifications are held in memory and lost on restart.
-- `backend/.env.example` sets `PORT` twice and still includes an unused `DATABASE_URL`.
+- Notifications are persisted but have no push delivery — `GET /notifications/user/:userId` is polling-only, no socket event fires when one is created.
+- The in-memory guess-streak tracker in `GameService` resets on restart and doesn't survive horizontal scaling — fine for a single instance.
 
 ## Design and docs
 

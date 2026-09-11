@@ -19,7 +19,7 @@ app/
   page.tsx              # mode selection (solo / rooms / head-to-head) + leaderboard link
   solo/page.tsx          # solo play — REST only
   rooms/page.tsx         # shared rooms — REST to create/join, Socket.IO for live play
-  head-to-head/page.tsx  # two-player matches — same as rooms; staking not wired up yet
+  head-to-head/page.tsx  # invite-code challenges, optional staking, live play, settlement
   leaderboard/page.tsx
 components/
   LyricCard.tsx           # the flip card + 15s timer
@@ -46,11 +46,22 @@ Connecting a wallet (`WalletConnect`) does two things:
 
 Every mode uses `user.id` from that session as the player identity when calling the game endpoints.
 
+## Head-to-head: challenges and staking
+
+`head-to-head/page.tsx` is a small state machine (`idle → waiting-for-opponent → staking → playing → finished`):
+
+1. The host optionally sets a stake (XLM) and creates a challenge (`challengesApi.create`), getting back a short code. The page polls `GET /challenges/:code` every 2s until the opponent accepts.
+2. The joiner enters the code (`challengesApi.accept`), which atomically creates the session and — if a stake was set — the wager, and returns both ids straight away.
+3. If there's a wager, both clients poll `GET /wagers/:id` and each calls `wagerApi.stake` for themselves; once both have staked, play starts.
+4. Once the session's score-tracked rounds finish, whichever client gets there first calls `wagerApi.settle` (highest score wins the pot) or `wagerApi.refund` on a tie. The other client's settle call is a no-op against the same already-settled wager (the backend treats a repeat call with the same winner as idempotent) — see [`backend/README.md#wager-lifecycle`](../backend/README.md#wager-lifecycle).
+
+Amounts are entered in XLM and converted to stroops (`xlmToStroops` in `lib/api.ts`) before hitting the API, which only ever deals in stroop strings.
+
 ## Known gaps
 
-- Head-to-head matches don't call the wager endpoints (`POST /wagers`, `/wagers/:id/stake`, `/wagers/:id/settle`) yet — see [`backend/README.md#wager-lifecycle`](../backend/README.md#wager-lifecycle) for what exists server-side to build against.
-- No invite-code UI for challenging a specific player by code — matches are joined by session ID today.
+- `lyricsflip-nft` reward NFTs are never minted client- or server-side — see the [root README](../README.md#known-gaps).
 - Confetti (or any celebration) on a correct guess isn't implemented.
 - No test suite runs in CI yet; `npm test` works locally.
+- The settlement race between two clients (step 4 above) is resolved by the backend's idempotent `settle`, but it's still two independent clients guessing at "the match is over" from their own socket state rather than a single authoritative server-pushed event.
 
 See the [root README](../README.md#known-gaps) for the full list.

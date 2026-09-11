@@ -12,7 +12,8 @@ The LyricsFlip API: NestJS 11, TypeORM/PostgreSQL, a Socket.IO gateway for live 
 | `game`          | `src/modules/game`            | Sessions (solo/room/head-to-head), fuzzy scoring, the `/game` gateway |
 | `wager`         | `src/modules/wager`           | Wager state machine, calls into `stellar`                             |
 | `stellar`       | `src/modules/stellar`         | Escrow contract calls; `mock` or `stellar` settlement                 |
-| `notifications` | `src/modules/notifications`   | In-memory per-user notifications (see [Known gaps](#known-gaps))      |
+| `notifications` | `src/modules/notifications`   | Per-user notifications, persisted to Postgres                         |
+| `challenges`    | `src/modules/challenges`      | Short invite codes that spin up a head-to-head session (and its wager, if staked) on accept |
 
 ## XP and levels
 
@@ -60,8 +61,11 @@ All routes are unprefixed (no global `/api` prefix — see the frontend's `NEXT_
 | POST   | `/wagers/:id/settle`            | Pay the winner                              |
 | POST   | `/wagers/:id/refund`            | Return both stakes                          |
 | POST   | `/wagers/:id/reconcile`         | Admin: resolve a wager stuck in `settling`  |
-| GET    | `/notifications/user/:userId`   | A player's notifications (in-memory)        |
+| GET    | `/notifications/user/:userId`   | A player's notifications                    |
 | POST   | `/notifications/:id/read`       | Mark a notification read                    |
+| POST   | `/challenges`                   | Create an invite code, optionally staked (`hostUserId`, `stakeAmount?`) |
+| GET    | `/challenges/:code`             | Poll a challenge's status                   |
+| POST   | `/challenges/:code/accept`      | Accept a code — creates the session (and wager, if staked) |
 
 Full request/response schemas are in Swagger UI at `/api/docs` once the server is running.
 
@@ -94,6 +98,12 @@ Network calls to Stellar never happen inside a database transaction — see [`sr
 
 Amounts are carried as strings in stroops throughout (7 decimal places) — never as floats.
 
+`settle` is idempotent for a repeat call with the same `winnerId` — both players' clients may race to call it after a match ends, and the second call is a no-op rather than an error. In `mock` settlement mode (the default), staking and settling never touch the network, so the whole lifecycle works with no Stellar setup.
+
+### Starting a wager: challenges
+
+A wager always starts from a challenge, not directly from `POST /wagers`: `POST /challenges` with a `stakeAmount` creates an invite code that carries the stake, so the joiner never has to separately agree to an amount. Accepting the code (`POST /challenges/:code/accept`) creates the head-to-head `GameSession` and the `Wager` in one step and returns both ids. The host discovers this by polling `GET /challenges/:code` until `status` flips to `accepted`. A code expires 15 minutes after creation if unaccepted. An unstaked challenge (no `stakeAmount`) skips wager creation entirely — `wagerId` comes back `null`.
+
 ## Migrations
 
 ```bash
@@ -102,12 +112,12 @@ npm run migration:revert    # roll back one step
 npm run migration:generate -- src/database/migrations/SomeChange   # after entity changes
 ```
 
-The initial migration ([`src/database/migrations/1730000000000-InitSchema.ts`](src/database/migrations/1730000000000-InitSchema.ts)) creates `users`, `lyrics`, `game_sessions` and `wagers`.
+The initial migration ([`src/database/migrations/1730000000000-InitSchema.ts`](src/database/migrations/1730000000000-InitSchema.ts)) creates `users`, `lyrics`, `game_sessions` and `wagers`. A second migration ([`src/database/migrations/1730000100000-AddChallengesAndNotifications.ts`](src/database/migrations/1730000100000-AddChallengesAndNotifications.ts)) adds `notifications` and `challenges`.
 
 ## Known gaps
 
-- Notifications live in memory (`NotificationsService`) and are lost on every restart.
-- There is no endpoint yet behind the frontend's challenge invite codes.
 - `game.module.ts`'s in-memory streak tracking resets on restart, same as any other in-process state — fine for a single instance, not for horizontal scaling.
+- `lyricsflip-nft` reward NFTs are never minted — nothing in this backend calls the NFT contract's `mint` yet.
+- Notifications have no delivery mechanism beyond polling `GET /notifications/user/:userId` — no push/websocket event fires when one is created.
 
 See the [root README](../README.md#known-gaps) for the full list, including frontend-side gaps.

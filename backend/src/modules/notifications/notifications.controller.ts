@@ -13,8 +13,8 @@ export class NotificationsController {
   }
 
   @Post(':id/read')
-  markRead(@Param('id') id: string) {
-    this.notificationsService.markRead(id);
+  async markRead(@Param('id') id: string) {
+    await this.notificationsService.markRead(id);
     return { id, read: true };
   }
 }
