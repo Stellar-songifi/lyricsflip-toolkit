@@ -1,128 +1,118 @@
 <p align="center">
-  <img src="assets/LyricsFlipLogo.svg" alt="LyricsFlip" width="160" />
+  <img src="assets/LyricsFlipLogo.svg" alt="LyricsFlip" width="120" />
 </p>
 
-<h1 align="center">LyricsFlip</h1>
+# lyricsflip-toolkit
 
-<p align="center">
-  A lyrics-guessing card game on Stellar. See a snippet, name the song or the artist before the card flips — solo, in a room, or head-to-head for a stake settled by a Soroban escrow contract.
-</p>
+**Settlement toolkit for head-to-head games on Stellar.**
+Your game server decides who won. A Soroban escrow contract holds both stakes and pays the winner,
+and it is built so that even a compromised server can't drain it.
+[LyricsFlip](https://github.com/Stellar-songifi/lyricsflip), a lyrics-guessing card game, is the reference game.
+
+> **Status: under active restructuring.** This repository is being turned from the LyricsFlip web
+> monorepo into a reusable toolkit. The status table below shows what is done and what is planned.
+> Nothing here is audited. Do not use it with real value yet.
 
 ---
 
 ## Contents
 
-- [How it plays](#how-it-plays)
-- [Project status](#project-status)
+- [Why this exists](#why-this-exists)
+- [What's in the toolkit](#whats-in-the-toolkit)
+- [Status](#status)
+- [How it works](#how-it-works)
 - [Repository layout](#repository-layout)
-- [How the pieces fit together](#how-the-pieces-fit-together)
-- [Tech stack](#tech-stack)
 - [Getting started](#getting-started)
-- [Configuration](#configuration)
-- [Smart contracts](#smart-contracts)
-- [Wagers and settlement](#wagers-and-settlement)
-- [Testing and CI](#testing-and-ci)
-- [Known gaps](#known-gaps)
-- [Design and docs](#design-and-docs)
+- [Security model](#security-model)
+- [When to use something else](#when-to-use-something-else)
+- [Docs](#docs)
 - [Contributing](#contributing)
 - [History and related repositories](#history-and-related-repositories)
 
-## How it plays
+## Why this exists
 
-Each card shows a lyric snippet tagged with an artist, title, genre and decade. You guess either the **song title** or the **artist** before the 15-second timer runs out. Guesses are matched fuzzily, so a near-miss can still earn partial points.
+Most competitive games can't run their gameplay on-chain: it's too fast, too complex, or depends on
+off-chain data. But players still want stakes they can trust. That leaves a hard gap between an
+off-chain game server that knows the result and on-chain money that must move correctly:
 
-| Outcome               | Points         |
-| --------------------- | -------------- |
-| Correct guess         | 100            |
-| Partial match         | 50             |
-| Streak bonus          | 25             |
-| Difficulty multiplier | ×1 / ×1.5 / ×2 |
+- Who is allowed to declare the winner, and what stops them from paying someone else?
+- What happens if the server crashes halfway through a payout?
+- What if the server disappears while funds are locked?
+- How do you link a player account to exactly one wallet?
 
-Correct guesses earn XP, which moves players through five levels, from *Gossip Rookie* to *Gossip Guru* (thresholds in [`backend/README.md`](backend/README.md)).
+lyricsflip-toolkit packages the answers LyricsFlip built for these questions so any Stellar PvP
+game can reuse them.
 
-There are three ways to play:
+## What's in the toolkit
 
-- **Solo** — fetch a snippet, submit a guess, get scored.
-- **Rooms** — everyone in a room guesses against the same snippet before it expires.
-- **Head-to-head** — two players in one session, optionally with an equal stake each; the winner takes the pot.
+| Part | What it is |
+|---|---|
+| `contracts/pvp-escrow` | Soroban contract: one pot per match, keyed by the game's session ID. The resolver can only pay a player who staked in that pot. |
+| `packages/sdk` | TypeScript client for the contract: builds unsigned stake transactions for the player's wallet, and handles amounts as stroop strings, never floats. |
+| `packages/server` | NestJS module: wager state machine, server-side settlement, crash-safe reconciliation, SEP-10 wallet linking. |
+| `apps/game-server` | The LyricsFlip game backend (lyrics, rooms, daily challenge, XP), built on `packages/server`. |
+| `apps/mobile` | LyricsFlip for iOS and Android, built with Expo (React Native). |
+| `examples/coin-flip` | The smallest possible game using the toolkit. |
 
-## Project status
+## Status
 
-LyricsFlip is under active development. This table reflects what is in the code, not the roadmap.
+| Item | State |
+|---|---|
+| Escrow contract (open pot, stake, resolve, refund) | Implemented |
+| Wager state machine and SEP-10 wallet login | Implemented |
+| Settlement in `mock` mode (balances in Postgres) | Implemented |
+| Settlement in `stellar` mode (real Soroban calls) | **Planned** — currently a stub |
+| Server-only settlement trigger | **Planned** — currently triggered by a client |
+| Contract timeout refunds and atomic constructor | **Planned** |
+| `packages/sdk` and `packages/server` extraction | **Planned** |
+| Expo mobile app | **Planned** |
+| `examples/coin-flip` | **Planned** |
+| Security audit | Not started |
 
-| Feature                                                  | Lives in                     | State                                                          |
-| -------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- |
-| Lyric cards with a 15-second timer                       | `frontend`                   | Implemented                                                    |
-| Wallet connect (Freighter, xBull, Albedo, Lobstr, Hana)  | `frontend`                   | Implemented                                                    |
-| Solo play and fuzzy scoring                              | `backend`                    | Implemented                                                    |
-| Shared rooms                                             | `backend`                    | Implemented                                                    |
-| XP, levels and leaderboard (`GET /users/leaderboard`)    | `backend`                    | Implemented                                                    |
-| SEP-10 wallet login                                      | `backend`, `frontend`        | Implemented end-to-end                                         |
-| Invite codes for challenges                              | `backend`, `frontend`        | Implemented — a short code carries an optional stake           |
-| Head-to-head wagers with escrow                          | `backend`, `frontend`, `onchain` | Implemented in `mock` settlement mode; `stellar` mode's contract calls are still a stub — see [`backend/src/modules/stellar/stellar.service.ts`](backend/src/modules/stellar/stellar.service.ts) |
-| On-chain rounds, cards and answers                       | `onchain/lyricsflip`         | Implemented; the round's wager amount is always 0              |
-| NFT rewards                                              | `onchain/lyricsflip-nft`     | Contract implemented; nothing mints yet                        |
-| Notifications                                            | `backend`                    | Persisted to Postgres; no push delivery, polling only           |
-| Confetti on a correct guess                              | `frontend`                   | Not implemented                                                |
+## How it works
 
-See [Known gaps](#known-gaps) for the detail behind each partial item.
+```
+ Player A (wallet)      Player B (wallet)
+        │  sign stake XDR      │  sign stake XDR
+        ▼                      ▼
+ ┌────────────────────────────────────────┐
+ │  Your game server + packages/server    │
+ │  decides the result, drives the wager  │
+ └───────────────┬────────────────────────┘
+                 │ open_pot / resolve / refund
+                 ▼
+ ┌────────────────────────────────────────┐
+ │  pvp-escrow (Soroban)                  │
+ │  holds both stakes, pays only a player │
+ └────────────────────────────────────────┘
+```
+
+A wager moves through `pending → awaiting_stakes → staked → settling → won | refunded`, with
+`failed` for anything that needs an operator.
+
+1. **Open.** The server opens a pot for the match and asks each player to stake.
+2. **Stake.** Each player signs their own stake transaction in their wallet (non-custodial by default).
+   The wager becomes `staked` only when both stakes are confirmed.
+3. **Play.** The game runs off-chain as normal.
+4. **Settle.** When the match ends, the server alone calls `resolve` with the winner. The contract
+   refuses any winner who is not a player in that pot.
+5. **Recover.** If the server crashes mid-payout, the wager stays in `settling` with a transaction hash,
+   and reconciliation resolves it against the ledger. The server never makes a network call inside a
+   database transaction, because a database rollback can't undo a submitted Stellar transaction.
 
 ## Repository layout
 
 ```
-lyricsflip/
-├── frontend/                   # Next.js web app
-├── backend/                    # NestJS API + Socket.IO gateway
-├── onchain/                    # Cargo workspace of Soroban contracts
-│   └── contracts/
-│       ├── lyricsflip/         # rounds, cards, answers, player stats
-│       ├── lyricsflip-nft/     # minter-gated reward NFTs
-│       └── lyricsflip-escrow/  # per-session wager pots
-├── docs/                       # design handoff and project docs
-├── assets/                     # logo files
-└── .github/workflows/          # CI for onchain and backend
+lyricsflip-toolkit/
+├── contracts/pvp-escrow/   # Soroban escrow contract
+├── packages/sdk/           # TypeScript contract client
+├── packages/server/        # NestJS settlement module
+├── apps/game-server/       # LyricsFlip backend
+├── apps/mobile/            # LyricsFlip Expo app
+├── examples/coin-flip/     # minimal example game
+├── docs/                   # architecture, integration, threat model
+└── .github/workflows/      # CI
 ```
-
-Each package has its own README with the full detail:
-
-- [`frontend/README.md`](frontend/README.md)
-- [`backend/README.md`](backend/README.md) — modules, full API table, wager lifecycle, migrations
-- [`onchain/README.md`](onchain/README.md) — contract build, test and deploy
-
-## How the pieces fit together
-
-```
-                ┌──────────────────────────┐
-                │   frontend (Next.js)     │
-                └───────┬──────────┬───────┘
-          REST + Socket.IO        │ Stellar Wallets Kit
-                        │          │ (player signs)
-                ┌───────▼──────┐   │
-                │   backend    │   │
-                │   (NestJS)   │   │
-                └──┬────────┬──┘   │
-                   │        │      │
-          ┌────────▼──┐  ┌──▼──────▼──────────────────────┐
-          │ PostgreSQL│  │ Soroban RPC                    │
-          └───────────┘  │  lyricsflip · lyricsflip-nft · │
-                         │  lyricsflip-escrow             │
-                         └────────────────────────────────┘
-```
-
-- **PostgreSQL** holds accounts, lyrics, sessions, guess history and XP.
-- **The backend** talks to the **escrow** contract to open pots, collect stakes and pay out. In non-custodial mode it builds unsigned transactions and the player's wallet signs them.
-- **The frontend** holds contract clients for **lyricsflip** and **lyricsflip-nft** and signs through the connected wallet.
-
-> **Open design question:** game rounds currently exist in two places — as `GameSession` rows in Postgres and as rounds inside the `lyricsflip` contract. Decide which is the source of truth before building features that depend on both.
-
-## Tech stack
-
-| Layer     | Stack                                                                                                                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Frontend  | Next.js 14 (App Router), React 18, Tailwind CSS, Radix UI, Zustand, TanStack Query, Framer Motion, Socket.IO client, Stellar Wallets Kit, `@stellar/stellar-sdk`      |
-| Backend   | NestJS 11, TypeORM, PostgreSQL, Socket.IO, `@nestjs/event-emitter`, `@stellar/stellar-sdk`, Swagger                                                                  |
-| Contracts | Rust (version pinned in `.tool-versions`), `soroban-sdk` pinned once in `onchain/Cargo.toml`, `wasm32v1-none` target                                                  |
-| Hosting   | Frontend on Vercel; backend on AWS, Heroku or Render; contracts on Stellar                                                                                          |
 
 ## Getting started
 
@@ -130,181 +120,82 @@ Each package has its own README with the full detail:
 
 - Node.js 20+
 - PostgreSQL 14+
-- For contract work: Rust (see `.tool-versions`), the `wasm32v1-none` target, and the [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli)
+- For contract work: Rust (see `.tool-versions`), the `wasm32v1-none` target, and the
+  [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli)
+- For mobile: the Expo toolchain and an iOS simulator or Android emulator
 
-### 1. Clone
+### Clone
 
 ```bash
-git clone https://github.com/Stellar-songifi/lyricsflip.git
-cd lyricsflip
+git clone https://github.com/Stellar-songifi/lyricsflip-toolkit.git
+cd lyricsflip-toolkit
+npm install
 ```
 
-### 2. Backend
+### Contracts
 
 ```bash
-cd backend
-npm install
-cp .env.example .env        # set DB_*, JWT_SECRET, and a single PORT=3001
-createdb lyricflip          # must match DB_NAME in .env
+cd contracts
+cargo test
+stellar contract build
+```
+
+### Game server
+
+```bash
+cd apps/game-server
+cp .env.example .env        # set DB_*, JWT_SECRET, PORT
 npm run migration:run
-npm run seed                # optional sample data
 npm run start:dev
 ```
 
-The API runs on `http://localhost:3001` and Swagger UI is at `http://localhost:3001/api/docs`.
+Settlement defaults to `STELLAR_SETTLEMENT_MODE=mock`, which needs no Stellar setup.
 
-Settlement defaults to `STELLAR_SETTLEMENT_MODE=mock`, which keeps balances in Postgres and needs no Stellar setup, so you can build gameplay without deploying anything.
-
-### 3. Frontend
+### Mobile
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
+cd apps/mobile
+npx expo start
 ```
 
-The app runs on `http://localhost:3000`.
+Full setup, including env variables and testnet deployment, is in
+[`docs/integration-guide.md`](docs/integration-guide.md).
 
-> **Ports:** Next.js and NestJS both default to 3000. Run the backend on 3001 and point `NEXT_PUBLIC_API_URL` at it.
+## Security model
 
-### 4. Contracts (optional)
+- The resolver key can choose a winner, but **only a player who staked in that pot**.
+  A compromised server can pick the wrong one of the two players, but can't send funds anywhere else.
+- Refunds only return each stake to whoever made it.
+- Players sign their own stakes by default; the server never holds their keys.
+- Custodial mode is refused on Stellar mainnet.
 
-Only needed if you're changing contracts or running wagers in `stellar` mode.
+Read [`docs/threat-model.md`](docs/threat-model.md) for what the toolkit does and does not protect against.
 
-```bash
-rustup target add wasm32v1-none
-cd onchain
-cargo test
-cargo build --target wasm32v1-none --release
-```
+## When to use something else
 
-## Configuration
+If your use case is milestone-based payments, marketplaces or freelance work rather than a
+two-player match, a general escrow service may fit better.
+See [`docs/alternatives.md`](docs/alternatives.md).
 
-### Frontend — `frontend/.env.local`
+## Docs
 
-| Variable                                 | Purpose                            | Code default                          |
-| ----------------------------------------- | ----------------------------------- | --------------------------------------- |
-| `NEXT_PUBLIC_API_URL`                    | Backend origin                     | `http://localhost:3000/api`           |
-| `NEXT_PUBLIC_STELLAR_RPC_URL`            | Soroban RPC endpoint               | `https://soroban-testnet.stellar.org` |
-| `NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE` | Network passphrase                 | `Test SDF Network ; September 2015`   |
-| `NEXT_PUBLIC_LYRICSFLIP_CONTRACT_ID`     | Deployed `lyricsflip` contract     | none                                  |
-| `NEXT_PUBLIC_LYRICSFLIP_NFT_CONTRACT_ID` | Deployed `lyricsflip-nft` contract | none                                  |
-
-Always set `NEXT_PUBLIC_API_URL` to the backend origin with no path, e.g. `http://localhost:3001`. The backend has no global route prefix, so the code default's `/api` path doesn't exist.
-
-### Backend — `backend/.env`
-
-`backend/.env.example` documents every variable. The ones you can't skip:
-
-| Variable                                                      | Purpose                                                |
-| --------------------------------------------------------------- | -------------------------------------------------------- |
-| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME` | Primary database; boot fails if any is missing         |
-| `DB_REPLICA_*`                                                | Optional read replica; each falls back to the primary  |
-| `JWT_SECRET`, `JWT_EXPIRES_IN`                                | Token signing                                          |
-| `PORT`, `FRONTEND_URL`, `NODE_ENV`                            | HTTP port, CORS origin, environment                    |
-| `STELLAR_SETTLEMENT_MODE`                                     | `mock` (default) or `stellar`                          |
-| `STELLAR_CUSTODY_MODE`                                        | `non-custodial` (default) or `custodial`               |
-
-Other `STELLAR_*` variables are only read in `stellar` mode and are validated at boot. `custodial` combined with `STELLAR_NETWORK=public` is refused at boot.
-
-## Smart contracts
-
-All three contracts live in one Cargo workspace under `onchain/`, sharing a single `soroban-sdk` version and release profile.
-
-| Contract            | Purpose                                                   | Key entry points                                                                      |
-| -------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `lyricsflip`        | Rounds, cards, answers, player stats and roles            | `create_round`, `join_round`, `start_round`, `next_card`, `submit_answer`, `add_card` |
-| `lyricsflip-nft`    | Reward NFTs; only the configured minter can mint          | `mint`, `owner_of`, `token_count`                                                     |
-| `lyricsflip-escrow` | One wager pot per game session, keyed by the session UUID | `initialize`, `open_pot`, `stake`, `resolve`, `refund`, `set_resolver`                |
-
-The escrow's resolver key can pick a winner but can only pay a player in that pot, and refunds only return each stake to whoever made it. A compromised backend key can choose wrongly but can't drain escrow.
-
-Deploy commands are in [`onchain/README.md`](onchain/README.md). Once deployed, wire the IDs in:
-
-| Contract ID          | Goes into                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| `lyricsflip`         | `NEXT_PUBLIC_LYRICSFLIP_CONTRACT_ID` (frontend)                                               |
-| `lyricsflip-nft`     | `NEXT_PUBLIC_LYRICSFLIP_NFT_CONTRACT_ID` (frontend)                                           |
-| Escrow, token, resolver | `STELLAR_ESCROW_CONTRACT_ID`, `STELLAR_TOKEN_CONTRACT_ID`, `STELLAR_RESOLVER_SECRET` (backend) |
-
-The wager token is either a Soroban token contract or a classic asset's Stellar Asset Contract; no token contract lives in this repo. After switching the backend to `STELLAR_SETTLEMENT_MODE=stellar`, compare `GET /stellar/info` against what you deployed before letting players in.
-
-## Wagers and settlement
-
-A wagered session escrows an equal stake from both players and pays the whole pot to the winner. Amounts are carried as strings in stroops (7 decimal places), so no amount ever passes through a float.
-
-In the default non-custodial mode, funding a pot takes two round trips: creating the session opens the pot and returns one unsigned transaction per player, and each player signs theirs in their wallet and posts it back. A wager moves through `pending → awaiting_stakes → staked → settling → won | refunded`, with `failed` for anything that needs an operator.
-
-The backend never makes a network call inside a database transaction, because a Postgres rollback can't un-submit a Stellar transaction. A crash mid-payout leaves the wager in `settling` with a transaction hash, and an admin reconcile endpoint resolves it against the ledger.
-
-Both players must link and verify a wallet before joining a wagered match. The full lifecycle and endpoints are in [`backend/README.md`](backend/README.md).
-
-## Testing and CI
-
-```bash
-# Backend (unit tests need no database)
-cd backend && npm test
-npm run test:e2e             # needs a database
-
-# Frontend
-cd frontend && npm test
-
-# Contracts
-cd onchain && cargo fmt --check && cargo test
-```
-
-CI runs on pushes to `main` and on pull requests:
-
-- `.github/workflows/onchain.yml` — `cargo fmt --check`, a `wasm32v1-none` release build, and `cargo test`
-- `.github/workflows/backend.yml` — `npm ci`, `npm run build`, `npm test` (only when `backend/` changes)
-
-The frontend has no CI job yet.
-
-## Known gaps
-
-Good first issues, all checked against the code.
-
-**Settlement**
-
-- `STELLAR_SETTLEMENT_MODE=stellar` is a stub — [`stellar.service.ts`](backend/src/modules/stellar/stellar.service.ts)'s `openPot`/`resolve`/`refund` throw "not implemented yet" outside of `mock` mode. The wager state machine, challenge flow and `lyricsflip-escrow` contract are all in place; what's missing is the `@stellar/stellar-sdk` code in `stellar.service.ts` that builds and submits the actual Soroban invocations against `STELLAR_ESCROW_CONTRACT_ID`.
-- Settling a finished head-to-head match is triggered by whichever client's socket sees `sessionStatus: 'finished'` first, not by a single authoritative server-pushed event — the backend's idempotent `settle` (a repeat call with the same winner is a no-op) covers the resulting race, but a cleaner design would have the backend call `settle` itself once a session finishes.
-
-**Contracts**
-
-- `lyricsflip-nft` only lets its minter mint, and nothing — not the `lyricsflip` game contract, not the backend — ever calls `mint`, so reward NFTs can't be issued yet.
-- `lyricsflip` (the onchain contract) stores a `wager_amount` on each round but always sets it to 0 and moves no tokens. Real stakes go through `lyricsflip-escrow` via the backend's wager/challenge flow instead.
-
-**Frontend**
-
-- No confetti (or any celebration) on a correct guess.
-- No test suite runs in CI yet; `npm test` works locally (`frontend/`).
-
-**Backend**
-
-- Notifications are persisted but have no push delivery — `GET /notifications/user/:userId` is polling-only, no socket event fires when one is created.
-- The in-memory guess-streak tracker in `GameService` resets on restart and doesn't survive horizontal scaling — fine for a single instance.
-
-## Design and docs
-
-- [Figma — game design](https://www.figma.com/design/6phOWkHKQgLRhRwmBBQDXB/LyricsFlip?node-id=0-1&t=0U8SlbaJijr7XNeG-1)
-- [Figma — contributors page](https://www.figma.com/design/cUgNi0Ck7HS6QHLim7xOTY/Projects?node-id=89-259&t=VGBgLi8VhPgV9N5u-1)
-- [Notion documentation](https://www.notion.so/LyricFlip-Documentation-188644d19c538007af9be7fafb912b9c?pvs=4)
-- [`docs/design-handoff.md`](docs/design-handoff.md) — colours and typography for auth screens
+- [`docs/architecture.md`](docs/architecture.md) — components and the wager lifecycle
+- [`docs/integration-guide.md`](docs/integration-guide.md) — add stakes to your own game
+- [`docs/threat-model.md`](docs/threat-model.md) — trust assumptions and attack scenarios
+- [`docs/alternatives.md`](docs/alternatives.md) — other Stellar escrow options
+- [`docs/mobile.md`](docs/mobile.md) — the Expo app
+- [`docs/design-handoff.md`](docs/design-handoff.md) — LyricsFlip colours and typography
 
 ## Contributing
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. The short version:
-
-- Branch off `main`; never push to it directly.
-- Keep PRs small and focused, and explain what changed and why.
-- Test before you open a PR, and run `cargo fmt` for contract changes.
-- If an issue is tagged for an event, applying for it before the event starts disqualifies you from that issue.
-
-Questions go in GitHub Issues or Discussions.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. In short: branch off `main`,
+keep PRs small, run the tests, and run `cargo fmt` for contract changes.
 
 ## History and related repositories
 
-This repository combines the original LyricsFlip monorepo with the standalone [`lyricsflip_server`](https://github.com/songifi/lyricsflip_server) repository. The server's full commit history was merged into `backend/`, and its escrow contract moved into `onchain/`. The previous NestJS 10 backend was removed but remains in git history.
+This repository started as a merge of the LyricsFlip monorepo and
+[`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server), and is being restructured
+into a toolkit. Earlier code remains in git history.
 
-- [LyricsFlip Mobile](https://github.com/songifi/lyricsflip_mobile) — the mobile app is being migrated into its own repository.
+- [`lyricsflip`](https://github.com/Stellar-songifi/lyricsflip) — the LyricsFlip web game and its game contracts
+- [`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server) — the original standalone server
