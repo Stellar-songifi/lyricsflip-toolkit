@@ -6,7 +6,8 @@
   "workspaces": [
     "packages/sdk",
     "packages/server",
-    "apps/game-server"
+    "apps/game-server",
+    "apps/mobile"
   ],
   "engines": {
     "node": ">=22.12"
