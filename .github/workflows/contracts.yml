@@ -1,19 +1,19 @@
-name: onchain
+name: contracts
 
 on:
   push:
     branches: [main]
     paths:
-      - "onchain/**"
-      - ".github/workflows/onchain.yml"
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
   pull_request:
     paths:
-      - "onchain/**"
-      - ".github/workflows/onchain.yml"
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
 
 defaults:
   run:
-    working-directory: onchain
+    working-directory: contracts
 
 jobs:
   build-and-test:
@@ -33,8 +33,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            onchain/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('onchain/Cargo.lock') }}
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
