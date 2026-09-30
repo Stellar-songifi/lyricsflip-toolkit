@@ -52,7 +52,7 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialized = 1,
+    // 1 was `AlreadyInitialized`, from the removed `initialize` entry point.
     NotInitialized = 2,
     NotAuthorized = 3,
     PotAlreadyExists = 4,
@@ -70,22 +70,19 @@ pub struct PvpEscrow;
 
 #[contractimpl]
 impl PvpEscrow {
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        resolver: Address,
-        token: Address,
-    ) -> Result<(), Error> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::AlreadyInitialized);
-        }
+    /// Sets the admin, resolver and stake token.
+    ///
+    /// Runs atomically as part of deployment (`stellar contract deploy
+    /// --wasm ... -- --admin ... --resolver ... --token ...`), so there is no
+    /// window between deploy and setup in which someone else could configure
+    /// the contract. There is no separate `initialize` entry point, so this
+    /// can never run a second time.
+    pub fn __constructor(env: Env, admin: Address, resolver: Address, token: Address) {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Resolver, &resolver);
         env.storage().instance().set(&DataKey::Token, &token);
-
-        Ok(())
     }
 
     pub fn set_resolver(env: Env, admin: Address, resolver: Address) -> Result<(), Error> {
