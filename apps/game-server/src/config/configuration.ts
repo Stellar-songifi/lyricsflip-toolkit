@@ -35,6 +35,12 @@ export interface AppConfig {
     tokenContractId: string;
     resolverSecret: string;
   };
+  push: {
+    /** Deliver through Expo. Off by default outside production. */
+    enabled: boolean;
+    /** Optional Expo access token, if push security is enabled for the project. */
+    accessToken: string;
+  };
   sep10: {
     /** Empty in development means "generate a throwaway key at boot". */
     signingSecret: string;
@@ -104,6 +110,12 @@ export default (): AppConfig => {
         settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
       tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
       resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+    },
+    push: {
+      enabled:
+        (process.env.EXPO_PUSH_ENABLED ?? ((process.env.NODE_ENV ?? 'development') === 'production' ? 'true' : 'false')) ===
+        'true',
+      accessToken: process.env.EXPO_ACCESS_TOKEN ?? '',
     },
     sep10: {
       // Must be stable across restarts and shared by every instance, or
