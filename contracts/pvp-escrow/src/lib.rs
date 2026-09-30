@@ -23,6 +23,12 @@ pub const DAY_IN_LEDGERS: u32 = 17_280;
 pub const MIN_TIMEOUT_LEDGERS: u32 = 60;
 /// Longest allowed pot timeout: ~30 days.
 pub const MAX_TIMEOUT_LEDGERS: u32 = 30 * DAY_IN_LEDGERS;
+/// Storage lifetime to extend pots and the instance to on every access.
+/// Longer than the longest timeout, so a pot stays live until its players
+/// can reclaim it.
+pub const TTL_EXTEND_TO: u32 = 45 * DAY_IN_LEDGERS;
+/// Extend whenever remaining lifetime drops below this.
+pub const TTL_THRESHOLD: u32 = TTL_EXTEND_TO - DAY_IN_LEDGERS;
 
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -99,6 +105,7 @@ impl PvpEscrow {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Resolver, &resolver);
         env.storage().instance().set(&DataKey::Token, &token);
+        Self::extend_instance(&env);
     }
 
     /// Rotates the resolver key. Admin only.
@@ -158,9 +165,7 @@ impl PvpEscrow {
             deadline_ledger: env.ledger().sequence() + timeout_ledgers,
         };
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Pot(session_id), &pot);
+        Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
 
@@ -186,12 +191,7 @@ impl PvpEscrow {
             return Err(Error::AlreadyStaked);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_id);
+        let token_client = Self::token(&env)?;
         token_client.transfer(&player, env.current_contract_address(), &pot.stake_amount);
 
         if is_a {
@@ -203,9 +203,7 @@ impl PvpEscrow {
             pot.status = PotStatus::Staked;
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Pot(session_id), &pot);
+        Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
 
@@ -226,19 +224,12 @@ impl PvpEscrow {
             return Err(Error::InvalidWinner);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_id);
+        let token_client = Self::token(&env)?;
         let pot_total = pot.stake_amount * 2;
         token_client.transfer(&env.current_contract_address(), &winner, &pot_total);
 
         pot.status = PotStatus::Resolved;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Pot(session_id), &pot);
+        Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
 
@@ -252,12 +243,7 @@ impl PvpEscrow {
             return Err(Error::PotNotOpen);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_id);
+        let token_client = Self::token(&env)?;
         let contract_address = env.current_contract_address();
 
         if pot.player_a_staked {
@@ -268,9 +254,7 @@ impl PvpEscrow {
         }
 
         pot.status = PotStatus::Refunded;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Pot(session_id), &pot);
+        Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
 
@@ -301,16 +285,7 @@ impl PvpEscrow {
             return Err(Error::NothingToClaim);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        token::Client::new(&env, &token_id).transfer(
-            &env.current_contract_address(),
-            &player,
-            &pot.stake_amount,
-        );
+        Self::token(&env)?.transfer(&env.current_contract_address(), &player, &pot.stake_amount);
 
         if is_a {
             pot.player_a_staked = false;
@@ -321,9 +296,7 @@ impl PvpEscrow {
             pot.status = PotStatus::Refunded;
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Pot(session_id), &pot);
+        Self::save_pot(&env, &session_id, &pot);
         Ok(pot.stake_amount)
     }
 
@@ -334,6 +307,7 @@ impl PvpEscrow {
 
 impl PvpEscrow {
     fn require_admin(env: &Env) -> Result<(), Error> {
+        Self::extend_instance(env);
         let admin: Address = env
             .storage()
             .instance()
@@ -346,6 +320,7 @@ impl PvpEscrow {
     /// Requires the stored resolver's authorisation. The resolver is never
     /// taken from arguments, so a caller can't name themselves as resolver.
     fn require_resolver(env: &Env) -> Result<(), Error> {
+        Self::extend_instance(env);
         let resolver: Address = env
             .storage()
             .instance()
@@ -355,11 +330,41 @@ impl PvpEscrow {
         Ok(())
     }
 
+    fn token(env: &Env) -> Result<token::Client<'_>, Error> {
+        let token_id: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        Ok(token::Client::new(env, &token_id))
+    }
+
     fn load_pot(env: &Env, session_id: &BytesN<16>) -> Result<Pot, Error> {
+        Self::extend_instance(env);
+        let key = DataKey::Pot(session_id.clone());
+        let pot = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::PotNotFound)?;
         env.storage()
             .persistent()
-            .get(&DataKey::Pot(session_id.clone()))
-            .ok_or(Error::PotNotFound)
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(pot)
+    }
+
+    fn save_pot(env: &Env, session_id: &BytesN<16>, pot: &Pot) {
+        let key = DataKey::Pot(session_id.clone());
+        env.storage().persistent().set(&key, pot);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    fn extend_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
