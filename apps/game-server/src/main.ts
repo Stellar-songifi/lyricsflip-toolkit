@@ -9,10 +9,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService<AppConfig, true>);
 
-  // Registered before `listen()` so cross-origin requests from the frontend
-  // are never rejected — see README.md#known-gaps for the bug this avoids.
+  // Registered before `listen()` so cross-origin requests from a browser
+  // client (the web game) are never rejected. The mobile app needs no CORS.
   app.enableCors({
-    origin: configService.get('frontendUrl', { infer: true }),
+    origin: configService.get('corsOrigin', { infer: true }),
     credentials: true,
   });
 

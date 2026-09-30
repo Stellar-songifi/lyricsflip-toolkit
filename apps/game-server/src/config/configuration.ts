@@ -4,7 +4,8 @@ export type CustodyMode = 'non-custodial' | 'custodial';
 export interface AppConfig {
   port: number;
   nodeEnv: string;
-  frontendUrl: string;
+  /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
+  corsOrigin: string;
   jwt: {
     secret: string;
     expiresIn: string;
@@ -84,7 +85,7 @@ export default (): AppConfig => {
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv: process.env.NODE_ENV ?? 'development',
-    frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    corsOrigin: process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
