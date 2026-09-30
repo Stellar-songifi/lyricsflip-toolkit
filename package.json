@@ -7,7 +7,8 @@
     "packages/sdk",
     "packages/server",
     "apps/game-server",
-    "apps/mobile"
+    "apps/mobile",
+    "examples/coin-flip"
   ],
   "engines": {
     "node": ">=22.12"
