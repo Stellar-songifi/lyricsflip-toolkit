@@ -188,7 +188,14 @@ Full setup, including env variables and testnet deployment, is in
 - The resolver key can choose a winner, but **only a player who staked in that pot**.
   A compromised server can pick the wrong one of the two players, but can't send funds anywhere else.
 - Refunds only return each stake to whoever made it.
-- Players sign their own stakes by default; the server never holds their keys.
+- If the server disappears, players reclaim their own stakes after the pot's deadline. Funds can't be
+  locked forever.
+- The contract is configured in its constructor, inside the deploy transaction, so nobody can
+  initialise it first.
+- Players sign their own stakes by default, and the server never holds their keys. Every signed
+  envelope is checked to be exactly that player's stake for that pot before it is submitted.
+- Settlement is triggered only by the server, from results it recorded itself. Player ids always come
+  from the authenticated session, never from a request body.
 - Custodial mode is refused on Stellar mainnet.
 
 Read [`docs/threat-model.md`](docs/threat-model.md) for what the toolkit does and does not protect against.
@@ -206,6 +213,11 @@ See [`docs/alternatives.md`](docs/alternatives.md).
 - [`docs/threat-model.md`](docs/threat-model.md) — trust assumptions and attack scenarios
 - [`docs/alternatives.md`](docs/alternatives.md) — other Stellar escrow options
 - [`docs/mobile.md`](docs/mobile.md) — the Expo app
+- [`docs/wallet-spike.md`](docs/wallet-spike.md) — mobile wallet options (passkeys and others)
+- [`contracts/README.md`](contracts/README.md) — contract API, invariants and events
+- [`packages/sdk/README.md`](packages/sdk/README.md) — the SDK and React Native polyfills
+- [`packages/server/README.md`](packages/server/README.md) — the NestJS module's API
+- [`examples/coin-flip/README.md`](examples/coin-flip/README.md) — the smallest integration
 - [`docs/design-handoff.md`](docs/design-handoff.md) — LyricsFlip colours and typography
 
 ## Contributing
@@ -216,8 +228,10 @@ keep PRs small, run the tests, and run `cargo fmt` for contract changes.
 ## History and related repositories
 
 This repository started as a merge of the LyricsFlip monorepo and
-[`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server), and is being restructured
-into a toolkit. Earlier code remains in git history.
+[`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server), and has been restructured
+into a toolkit. The Stellar RPC wrapper, escrow client, amount helpers, reconciler and daily challenge
+were ported from `Lyricsflip_server`. The web frontend and the game and NFT contracts were removed, and
+remain in git history and in `lyricsflip`.
 
 - [`lyricsflip`](https://github.com/Stellar-songifi/lyricsflip) — the LyricsFlip web game and its game contracts
 - [`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server) — the original standalone server
