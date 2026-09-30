@@ -1,4 +1,4 @@
-# backend
+# game-server
 
 The LyricsFlip API: NestJS 11, TypeORM/PostgreSQL, a Socket.IO gateway for live play, and Stellar/Soroban settlement for wagers.
 
