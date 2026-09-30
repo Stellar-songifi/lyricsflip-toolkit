@@ -4,6 +4,7 @@
   "private": true,
   "description": "Settlement toolkit for head-to-head games on Stellar",
   "workspaces": [
+    "packages/server",
     "apps/game-server"
   ],
   "engines": {
