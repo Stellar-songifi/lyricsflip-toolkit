@@ -155,3 +155,85 @@ fn pots_are_independent_per_session() {
     assert_eq!(s.escrow_balance(), STAKE);
     assert_eq!(s.escrow.get_pot(&other).status, PotStatus::Open);
 }
+
+// --- resolve guards -----------------------------------------------------
+
+#[test]
+fn a_pot_cannot_be_resolved_twice() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    let second = s.escrow.try_resolve(&s.session_id, &s.player_b);
+
+    assert_eq!(second, Err(Ok(Error::PotNotStaked)));
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE - STAKE);
+}
+
+#[test]
+fn a_resolved_pot_cannot_be_refunded() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    assert_eq!(
+        s.escrow.try_refund(&s.session_id),
+        Err(Ok(Error::PotNotOpen))
+    );
+}
+
+#[test]
+fn a_refunded_pot_cannot_be_resolved() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.refund(&s.session_id);
+
+    assert_eq!(
+        s.escrow.try_resolve(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotStaked))
+    );
+}
+
+#[test]
+fn resolver_cannot_pay_someone_outside_the_pot() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    let outsider = Address::generate(&s.env);
+
+    let result = s.escrow.try_resolve(&s.session_id, &outsider);
+
+    assert_eq!(result, Err(Ok(Error::InvalidWinner)));
+    assert_eq!(s.token.balance(&outsider), 0);
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+}
+
+#[test]
+fn resolver_cannot_pay_the_escrow_itself() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+
+    let result = s.escrow.try_resolve(&s.session_id, &s.escrow.address);
+
+    assert_eq!(result, Err(Ok(Error::InvalidWinner)));
+}
+
+#[test]
+fn a_half_staked_pot_cannot_be_resolved() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+
+    assert_eq!(
+        s.escrow.try_resolve(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotStaked))
+    );
+}
+
+#[test]
+fn an_unknown_pot_cannot_be_resolved() {
+    let s = Setup::new();
+    assert_eq!(
+        s.escrow.try_resolve(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotFound))
+    );
+}
