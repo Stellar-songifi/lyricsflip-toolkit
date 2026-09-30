@@ -14,6 +14,7 @@ import { ChallengesModule } from './modules/challenges/challenges.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
 import { DailyModule } from './modules/daily/daily.module';
 import { PushModule } from './modules/push/push.module';
+import { FaucetModule } from './modules/faucet/faucet.module';
 import { PVP_ENTITIES } from '@lyricsflip-toolkit/server';
 import { User } from './modules/users/entities/user.entity';
 import { Lyric } from './modules/lyrics/entities/lyric.entity';
@@ -71,6 +72,7 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
     SettlementModule,
     DailyModule,
     PushModule,
+    FaucetModule,
     NotificationsModule,
     ChallengesModule,
   ],
