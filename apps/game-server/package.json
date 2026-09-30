@@ -1,7 +1,7 @@
 {
   "name": "@lyricsflip-toolkit/game-server",
   "version": "0.1.0",
-  "description": "LyricsFlip game server — NestJS + TypeORM + Socket.IO",
+  "description": "LyricsFlip game server \u2014 NestJS + TypeORM + Socket.IO",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
@@ -24,6 +24,7 @@
     "seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts"
   },
   "dependencies": {
+    "@lyricsflip-toolkit/server": "0.1.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
@@ -75,14 +76,36 @@
     "typescript": "^5.7.2"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.[tj]s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true
+          }
+        }
+      ]
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"
+    ],
+    "moduleNameMapper": {
+      "^@lyricsflip-toolkit/server$": "<rootDir>/../../../packages/server/src"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=22.12"
   }
 }

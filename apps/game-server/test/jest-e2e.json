@@ -1,9 +1,27 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
-  }
+    "^.+\\.[tj]s$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "allowJs": true
+        }
+      }
+    ]
+  },
+  "transformIgnorePatterns": [
+    "node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"
+  ],
+  "moduleNameMapper": {
+    "^@lyricsflip-toolkit/server$": "<rootDir>/../../packages/server/src"
+  },
+  "testTimeout": 30000
 }
