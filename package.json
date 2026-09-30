@@ -8,7 +8,7 @@
     "apps/game-server"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
