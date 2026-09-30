@@ -21,7 +21,10 @@
     "node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"
   ],
   "moduleNameMapper": {
-    "^@lyricsflip-toolkit/server$": "<rootDir>/../../packages/server/src"
+    "^@lyricsflip-toolkit/server$": "<rootDir>/../../../packages/server/src"
   },
-  "testTimeout": 30000
+  "testTimeout": 30000,
+  "setupFiles": [
+    "<rootDir>/e2e-env.ts"
+  ]
 }
