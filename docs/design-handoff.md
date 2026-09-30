@@ -20,7 +20,7 @@ Source of truth for visual design is Figma; this file captures the tokens engine
 | `success`     | `#34D399` | Correct guess                  |
 | `error`       | `#F87171` | Wrong guess, timeout            |
 
-These map to `tailwind.config.ts` under `theme.extend.colors` in `frontend/`.
+These map to `apps/mobile/src/lib/theme.ts`. The web game in `Stellar-songifi/lyricsflip` uses them in its Tailwind config.
 
 ## Typography
 
