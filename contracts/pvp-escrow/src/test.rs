@@ -3,6 +3,8 @@
 use super::*;
 use soroban_sdk::testutils::Address as _;
 
+const TIMEOUT: u32 = 1_000;
+
 fn create_token_contract<'a>(
     env: &Env,
     admin: &Address,
@@ -35,7 +37,7 @@ fn full_wager_lifecycle_pays_the_winner() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[7u8; 16]);
-    client.open_pot(&session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500, &TIMEOUT);
 
     client.stake(&session_id, &player_a);
     client.stake(&session_id, &player_b);
@@ -68,7 +70,7 @@ fn refund_returns_only_deposited_stakes() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[9u8; 16]);
-    client.open_pot(&session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500, &TIMEOUT);
     client.stake(&session_id, &player_a);
 
     client.refund(&session_id);
@@ -96,7 +98,7 @@ fn resolver_cannot_pay_someone_outside_the_pot() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[3u8; 16]);
-    client.open_pot(&session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500, &TIMEOUT);
     client.stake(&session_id, &player_a);
     client.stake(&session_id, &player_b);
 

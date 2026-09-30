@@ -114,6 +114,9 @@
                 },
                 {
                   "i128": "500"
+                },
+                {
+                  "u32": 1000
                 }
               ]
             }
@@ -447,6 +450,14 @@
               "durability": "persistent",
               "val": {
                 "map": [
+                  {
+                    "key": {
+                      "symbol": "deadline_ledger"
+                    },
+                    "val": {
+                      "u32": 1000
+                    }
+                  },
                   {
                     "key": {
                       "symbol": "player_a"

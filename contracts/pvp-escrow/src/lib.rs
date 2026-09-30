@@ -17,6 +17,13 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env,
 };
 
+/// Ledgers per day at ~5 seconds per ledger.
+pub const DAY_IN_LEDGERS: u32 = 17_280;
+/// Shortest allowed pot timeout: ~5 minutes.
+pub const MIN_TIMEOUT_LEDGERS: u32 = 60;
+/// Longest allowed pot timeout: ~30 days.
+pub const MAX_TIMEOUT_LEDGERS: u32 = 30 * DAY_IN_LEDGERS;
+
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -37,6 +44,10 @@ pub struct Pot {
     pub player_a_staked: bool,
     pub player_b_staked: bool,
     pub status: PotStatus,
+    /// Ledger sequence after which the pot has timed out: no more stakes are
+    /// accepted, and each player may reclaim their own stake with
+    /// `claim_refund` without the resolver.
+    pub deadline_ledger: u32,
 }
 
 #[contracttype]
@@ -64,6 +75,8 @@ pub enum Error {
     InvalidStakeAmount = 10,
     InvalidWinner = 11,
     SamePlayer = 12,
+    InvalidTimeout = 13,
+    DeadlinePassed = 14,
 }
 
 #[contract]
@@ -102,15 +115,21 @@ impl PvpEscrow {
     }
 
     /// Opens a pot for a match. Called by the game server after both players
-    /// have agreed to an equal stake; no funds move yet.
+    /// have agreed to an equal stake; no funds move yet. After
+    /// `timeout_ledgers` ledgers the pot times out (see `claim_refund`).
     pub fn open_pot(
         env: Env,
         session_id: BytesN<16>,
         player_a: Address,
         player_b: Address,
         stake_amount: i128,
+        timeout_ledgers: u32,
     ) -> Result<(), Error> {
         Self::require_resolver(&env)?;
+
+        if !(MIN_TIMEOUT_LEDGERS..=MAX_TIMEOUT_LEDGERS).contains(&timeout_ledgers) {
+            return Err(Error::InvalidTimeout);
+        }
 
         if stake_amount <= 0 {
             return Err(Error::InvalidStakeAmount);
@@ -134,6 +153,7 @@ impl PvpEscrow {
             player_a_staked: false,
             player_b_staked: false,
             status: PotStatus::Open,
+            deadline_ledger: env.ledger().sequence() + timeout_ledgers,
         };
 
         env.storage()
@@ -150,6 +170,9 @@ impl PvpEscrow {
         let mut pot = Self::load_pot(&env, &session_id)?;
         if pot.status != PotStatus::Open {
             return Err(Error::PotNotOpen);
+        }
+        if env.ledger().sequence() > pot.deadline_ledger {
+            return Err(Error::DeadlinePassed);
         }
 
         let is_a = player == pot.player_a;
