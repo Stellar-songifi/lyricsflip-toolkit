@@ -8,6 +8,10 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
+import { bytesToHex } from './bytes';
+
+/** Any valid account id works as the source of a read-only simulation. */
+const SIMULATION_SOURCE = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
 /**
  * What a submission is known to have done.
@@ -45,7 +49,8 @@ const DEFAULT_MAX_FEE = 10_000_000n;
  * the pending/failed distinction in one place.
  *
  * Ported from Stellar-songifi/Lyricsflip_server
- * `src/stellar/services/stellar-rpc.service.ts`, without NestJS or metrics,
+ * `src/stellar/services/stellar-rpc.service.ts`, without NestJS, metrics or
+ * Node-only APIs (it runs in React Native),
  * and with `pending` kept separate from `failed`: an unknown outcome must
  * never be treated as a definite failure, or a retry could pay twice.
  */
@@ -95,8 +100,7 @@ export class SorobanRpc {
 
   /** Simulates a read-only call and returns its decoded result. Costs nothing. */
   async read(contractId: string, method: string, args: xdr.ScVal[]): Promise<unknown> {
-    // Any valid account id works as the source of a simulation.
-    const source = new Account(Keypair.random().publicKey(), '0');
+    const source = new Account(SIMULATION_SOURCE, '0');
     const transaction = new TransactionBuilder(source, {
       fee: this.maxFee.toString(),
       networkPassphrase: this.networkPassphrase,
@@ -207,7 +211,7 @@ export class SimulationError extends Error {
 
 /** Hex hash; `Transaction.hash()` is a Uint8Array with no radix `toString`. */
 export function hashHex(transaction: Transaction): string {
-  return Buffer.from(transaction.hash()).toString('hex');
+  return bytesToHex(transaction.hash());
 }
 
 function toSubmission(hash: string, result: rpc.Api.GetTransactionResponse): Submission {
