@@ -137,4 +137,11 @@ describe('features the mobile app relies on (e2e)', () => {
       await request(server).patch('/users/me').set(...auth(b)).send({ username: 'Bad Name!' }).expect(400);
     });
   });
+
+  it('keeps the test-token faucet off outside stellar mode on a test network', async () => {
+    const player = await signIn(app);
+    const info = await request(server).get('/faucet').set(...auth(player)).expect(200);
+    expect(info.body).toMatchObject({ enabled: false, asset: null });
+    await request(server).post('/faucet').set(...auth(player)).expect(400);
+  });
 });
