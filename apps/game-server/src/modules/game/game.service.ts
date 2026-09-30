@@ -34,7 +34,7 @@ const ROUNDS_PER_SESSION = 10;
 
 @Injectable()
 export class GameService {
-  /** userId -> current correct-answer streak. Reset to 0 on a miss. */
+  /** `sessionId:userId` -> current correct-answer streak. Reset to 0 on a miss. */
   private readonly streaks = new Map<string, number>();
   /** sessionId -> lyric ids already shown, so a session never repeats one. */
   private readonly seenLyrics = new Map<string, string[]>();
@@ -138,7 +138,8 @@ export class GameService {
     }
 
     const lyric = await this.lyricsService.findById(session.currentLyricId);
-    const streak = this.streaks.get(userId) ?? 0;
+    const streakKey = `${sessionId}:${userId}`;
+    const streak = this.streaks.get(streakKey) ?? 0;
 
     // A guess can name either the title or the artist — score against both
     // and keep whichever classifies better.
@@ -148,9 +149,9 @@ export class GameService {
       byArtist.points > byTitle.points ? byArtist : byTitle;
 
     if (finalOutcome === GuessOutcome.CORRECT) {
-      this.streaks.set(userId, streak + 1);
+      this.streaks.set(streakKey, streak + 1);
     } else if (finalOutcome === GuessOutcome.MISS) {
-      this.streaks.set(userId, 0);
+      this.streaks.set(streakKey, 0);
     }
 
     session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
@@ -160,6 +161,8 @@ export class GameService {
     if (session.currentRound >= ROUNDS_PER_SESSION) {
       session.status = GameSessionStatus.FINISHED;
       session.currentLyricId = null;
+      for (const playerId of session.playerIds) this.streaks.delete(`${sessionId}:${playerId}`);
+      this.seenLyrics.delete(sessionId);
     } else {
       const seen = this.seenLyrics.get(sessionId) ?? [];
       const next = await this.lyricsService.getRandom(seen);
@@ -193,7 +196,7 @@ export class GameService {
     return {
       outcome: finalOutcome,
       pointsAwarded: finalPoints,
-      streak: this.streaks.get(userId) ?? 0,
+      streak: this.streaks.get(streakKey) ?? 0,
       nextLyric,
       sessionStatus: session.status,
     };
