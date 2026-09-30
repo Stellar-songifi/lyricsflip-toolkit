@@ -63,6 +63,7 @@ pub enum Error {
     AlreadyStaked = 9,
     InvalidStakeAmount = 10,
     InvalidWinner = 11,
+    SamePlayer = 12,
 }
 
 #[contract]
@@ -113,6 +114,9 @@ impl PvpEscrow {
 
         if stake_amount <= 0 {
             return Err(Error::InvalidStakeAmount);
+        }
+        if player_a == player_b {
+            return Err(Error::SamePlayer);
         }
         if env
             .storage()
