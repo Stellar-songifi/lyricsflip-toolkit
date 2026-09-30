@@ -8,6 +8,7 @@ describe('proposing and accepting a wager', () => {
     h = await createHarness();
   });
   afterAll(() => h.close());
+  beforeEach(() => h.gateway.reset());
 
   it('records a proposal without opening a pot or asking anyone to stake', async () => {
     const { alice, bob } = await twoLinkedPlayers(h);

@@ -43,6 +43,12 @@ export class ScriptedGateway implements EscrowGateway {
 
   constructor(readonly inner: MockEscrowGateway) {}
 
+  /** Clears queued faults and the call log. */
+  reset(): void {
+    this.faults.clear();
+    this.calls.length = 0;
+  }
+
   inject(method: Method, ...faults: Fault[]): void {
     this.faults.set(method, [...(this.faults.get(method) ?? []), ...faults]);
   }

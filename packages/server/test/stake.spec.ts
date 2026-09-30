@@ -8,6 +8,7 @@ describe('staking', () => {
     h = await createHarness();
   });
   afterAll(() => h.close());
+  beforeEach(() => h.gateway.reset());
 
   async function acceptedWager() {
     const players = await twoLinkedPlayers(h);
