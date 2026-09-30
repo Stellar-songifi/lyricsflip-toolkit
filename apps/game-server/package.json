@@ -97,7 +97,8 @@
       "node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"
     ],
     "moduleNameMapper": {
-      "^@lyricsflip-toolkit/server$": "<rootDir>/../../../packages/server/src"
+      "^@lyricsflip-toolkit/server$": "<rootDir>/../../../packages/server/src",
+      "^@lyricsflip-toolkit/sdk$": "<rootDir>/../../../packages/sdk/src"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
