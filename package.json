@@ -17,5 +17,9 @@
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspaces --if-present"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-test-renderer": "19.2.3"
   }
 }
