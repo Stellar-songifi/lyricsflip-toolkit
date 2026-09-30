@@ -9,14 +9,13 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { LyricsModule } from './modules/lyrics/lyrics.module';
 import { GameModule } from './modules/game/game.module';
-import { WagerModule } from './modules/wager/wager.module';
-import { StellarModule } from './modules/stellar/stellar.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChallengesModule } from './modules/challenges/challenges.module';
+import { SettlementModule } from './modules/settlement/settlement.module';
+import { PVP_ENTITIES } from '@lyricsflip-toolkit/server';
 import { User } from './modules/users/entities/user.entity';
 import { Lyric } from './modules/lyrics/entities/lyric.entity';
 import { GameSession } from './modules/game/entities/game-session.entity';
-import { Wager } from './modules/wager/entities/wager.entity';
 import { Notification } from './modules/notifications/entities/notification.entity';
 import { Challenge } from './modules/challenges/entities/challenge.entity';
 
@@ -35,7 +34,7 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
           username: db.primary.username,
           password: db.primary.password,
           database: db.primary.name,
-          entities: [User, Lyric, GameSession, Wager, Notification, Challenge],
+          entities: [User, Lyric, GameSession, Notification, Challenge, ...PVP_ENTITIES],
           synchronize: false,
           replication: db.replica
             ? {
@@ -64,8 +63,7 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
     UsersModule,
     LyricsModule,
     GameModule,
-    WagerModule,
-    StellarModule,
+    SettlementModule,
     NotificationsModule,
     ChallengesModule,
   ],
