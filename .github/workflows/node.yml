@@ -22,6 +22,22 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lyricsflip_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PVP_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_test
+      E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_e2e
     steps:
       - uses: actions/checkout@v4
 
@@ -37,5 +53,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Unit tests
+      - name: Tests
         run: npm test
+
+      - name: End-to-end tests
+        run: npm run test:e2e
