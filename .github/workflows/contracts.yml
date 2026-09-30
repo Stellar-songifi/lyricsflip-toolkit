@@ -41,6 +41,9 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Build (wasm32v1-none, release)
         run: cargo build --target wasm32v1-none --release
 
