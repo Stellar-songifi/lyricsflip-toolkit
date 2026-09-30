@@ -42,3 +42,4 @@ Cargo.lock.bak
 # Misc
 *.pem
 .turbo/
+contracts/**/test_snapshots/
