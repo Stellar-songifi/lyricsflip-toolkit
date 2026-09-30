@@ -14,7 +14,7 @@ export class ChallengesController {
 
   @Post()
   create(@CurrentUserId() userId: string, @Body() dto: CreateChallengeDto) {
-    return this.challengesService.create(userId, dto.stakeAmount);
+    return this.challengesService.create(userId, dto.stakeAmount, dto.opponentUsername);
   }
 
   @Get(':code')

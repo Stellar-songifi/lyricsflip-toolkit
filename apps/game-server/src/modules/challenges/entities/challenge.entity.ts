@@ -24,6 +24,10 @@ export class Challenge {
   @Column({ type: 'uuid' })
   hostUserId: string;
 
+  /** If set, only this user may accept (they were invited directly). */
+  @Column({ type: 'uuid', nullable: true })
+  invitedUserId: string | null;
+
   /** Stroops, as a string. Null means an unstaked match. */
   @Column({ type: 'varchar', nullable: true })
   stakeAmount: string | null;

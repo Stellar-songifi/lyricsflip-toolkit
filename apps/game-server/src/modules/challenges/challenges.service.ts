@@ -5,7 +5,10 @@ import { randomInt } from 'crypto';
 import { Challenge, ChallengeStatus } from './entities/challenge.entity';
 import { GameService } from '../game/game.service';
 import { GameMode } from '../game/entities/game-session.entity';
-import { WagerService, WalletLinkService } from '@lyricsflip-toolkit/server';
+import { WagerService, WalletLinkService, fromStroops } from '@lyricsflip-toolkit/server';
+import { UsersService } from '../users/users.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { deepLink } from '../notifications/deep-links';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — easy to read aloud
 const CODE_LENGTH = 6;
@@ -35,9 +38,15 @@ export class ChallengesService {
     private readonly gameService: GameService,
     private readonly wagerService: WagerService,
     private readonly walletLinks: WalletLinkService,
+    private readonly users: UsersService,
+    private readonly notifications: NotificationsService,
   ) {}
 
-  async create(hostUserId: string, stakeAmount?: string): Promise<ChallengeSummary> {
+  async create(hostUserId: string, stakeAmount?: string, opponentUsername?: string): Promise<ChallengeSummary> {
+    const invited = opponentUsername ? await this.users.findByUsername(opponentUsername) : null;
+    if (invited?.id === hostUserId) {
+      throw new BadRequestException("You can't challenge yourself");
+    }
     if (stakeAmount && !(await this.walletLinks.getAddress(hostUserId))) {
       throw new BadRequestException('Link a wallet before creating a staked challenge');
     }
@@ -48,10 +57,22 @@ export class ChallengesService {
         code,
         hostUserId,
         stakeAmount: stakeAmount ?? null,
+        invitedUserId: invited?.id ?? null,
         status: ChallengeStatus.PENDING,
         expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
       }),
     );
+
+    if (invited) {
+      const host = await this.users.findById(hostUserId);
+      const stake = stakeAmount ? ` for ${fromStroops(stakeAmount)}` : '';
+      await this.notifications.push(
+        invited.id,
+        'challenge.invite',
+        `${host.username} challenged you${stake}. Code ${code}.`,
+        { url: deepLink.challenge(code), code },
+      );
+    }
 
     return this.toSummary(challenge);
   }
@@ -81,6 +102,9 @@ export class ChallengesService {
     }
     if (challenge.hostUserId === joinerUserId) {
       throw new BadRequestException("You can't accept your own challenge");
+    }
+    if (challenge.invitedUserId && challenge.invitedUserId !== joinerUserId) {
+      throw new BadRequestException('This challenge was sent to someone else');
     }
     if (challenge.stakeAmount && !(await this.walletLinks.getAddress(joinerUserId))) {
       throw new BadRequestException('Link a wallet before accepting a staked challenge');
