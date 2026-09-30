@@ -2,6 +2,7 @@
   "name": "@lyricsflip-toolkit/mobile",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",

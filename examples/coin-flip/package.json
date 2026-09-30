@@ -2,6 +2,7 @@
   "name": "@lyricsflip-toolkit/example-coin-flip",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "The smallest possible game on lyricsflip-toolkit: two players stake, the server flips a coin.",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
