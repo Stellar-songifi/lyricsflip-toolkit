@@ -81,10 +81,15 @@ export class MockEscrowGateway implements EscrowGateway {
     if (!isA && !isB) return failed('NotAPlayerInPot');
     if ((isA && pot.playerAStaked) || (isB && pot.playerBStaked)) return failed('AlreadyStaked');
 
-    if (isA) pot.playerAStaked = true;
-    else pot.playerBStaked = true;
-    if (pot.playerAStaked && pot.playerBStaked) pot.status = 'staked';
-    await this.pots.save(pot);
+    // Column-targeted, conditional updates: two players staking at the same
+    // moment must not overwrite each other's flag.
+    const flag = isA ? 'playerAStaked' : 'playerBStaked';
+    const took = await this.pots.update({ id: potId, status: 'open', [flag]: false }, { [flag]: true });
+    if (!took.affected) return failed('AlreadyStaked');
+    await this.pots.update(
+      { id: potId, status: 'open', playerAStaked: true, playerBStaked: true },
+      { status: 'staked' },
+    );
     return confirmed();
   }
 
