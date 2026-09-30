@@ -104,9 +104,6 @@
               "function_name": "open_pot",
               "args": [
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
                   "bytes": "03030303030303030303030303030303"
                 },
                 {

@@ -105,14 +105,12 @@ impl PvpEscrow {
     /// have agreed to an equal stake; no funds move yet.
     pub fn open_pot(
         env: Env,
-        resolver: Address,
         session_id: BytesN<16>,
         player_a: Address,
         player_b: Address,
         stake_amount: i128,
     ) -> Result<(), Error> {
-        resolver.require_auth();
-        Self::require_resolver(&env, &resolver)?;
+        Self::require_resolver(&env)?;
 
         if stake_amount <= 0 {
             return Err(Error::InvalidStakeAmount);
@@ -186,14 +184,8 @@ impl PvpEscrow {
     /// Pays the full pot to `winner`. `winner` must be one of the two
     /// players already staked into this pot — the resolver cannot redirect
     /// funds anywhere else.
-    pub fn resolve(
-        env: Env,
-        resolver: Address,
-        session_id: BytesN<16>,
-        winner: Address,
-    ) -> Result<(), Error> {
-        resolver.require_auth();
-        Self::require_resolver(&env, &resolver)?;
+    pub fn resolve(env: Env, session_id: BytesN<16>, winner: Address) -> Result<(), Error> {
+        Self::require_resolver(&env)?;
 
         let mut pot = Self::load_pot(&env, &session_id)?;
         if pot.status != PotStatus::Staked {
@@ -221,9 +213,8 @@ impl PvpEscrow {
 
     /// Returns each player's own stake to them. Only refunds stakes that
     /// were actually deposited — a player who never staked gets nothing.
-    pub fn refund(env: Env, resolver: Address, session_id: BytesN<16>) -> Result<(), Error> {
-        resolver.require_auth();
-        Self::require_resolver(&env, &resolver)?;
+    pub fn refund(env: Env, session_id: BytesN<16>) -> Result<(), Error> {
+        Self::require_resolver(&env)?;
 
         let mut pot = Self::load_pot(&env, &session_id)?;
         if pot.status != PotStatus::Open && pot.status != PotStatus::Staked {
@@ -258,15 +249,15 @@ impl PvpEscrow {
 }
 
 impl PvpEscrow {
-    fn require_resolver(env: &Env, caller: &Address) -> Result<(), Error> {
+    /// Requires the stored resolver's authorisation. The resolver is never
+    /// taken from arguments, so a caller can't name themselves as resolver.
+    fn require_resolver(env: &Env) -> Result<(), Error> {
         let resolver: Address = env
             .storage()
             .instance()
             .get(&DataKey::Resolver)
             .ok_or(Error::NotInitialized)?;
-        if &resolver != caller {
-            return Err(Error::NotAuthorized);
-        }
+        resolver.require_auth();
         Ok(())
     }
 

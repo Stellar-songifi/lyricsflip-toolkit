@@ -35,7 +35,7 @@ fn full_wager_lifecycle_pays_the_winner() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[7u8; 16]);
-    client.open_pot(&resolver, &session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500);
 
     client.stake(&session_id, &player_a);
     client.stake(&session_id, &player_b);
@@ -44,7 +44,7 @@ fn full_wager_lifecycle_pays_the_winner() {
     assert_eq!(token_client.balance(&player_b), 500);
     assert_eq!(token_client.balance(&contract_id), 1_000);
 
-    client.resolve(&resolver, &session_id, &player_a);
+    client.resolve(&session_id, &player_a);
 
     assert_eq!(token_client.balance(&player_a), 1_500);
     assert_eq!(token_client.balance(&contract_id), 0);
@@ -68,10 +68,10 @@ fn refund_returns_only_deposited_stakes() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[9u8; 16]);
-    client.open_pot(&resolver, &session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500);
     client.stake(&session_id, &player_a);
 
-    client.refund(&resolver, &session_id);
+    client.refund(&session_id);
 
     assert_eq!(token_client.balance(&player_a), 1_000);
     assert_eq!(token_client.balance(&player_b), 0);
@@ -96,10 +96,10 @@ fn resolver_cannot_pay_someone_outside_the_pot() {
     let client = PvpEscrowClient::new(&env, &contract_id);
 
     let session_id = BytesN::from_array(&env, &[3u8; 16]);
-    client.open_pot(&resolver, &session_id, &player_a, &player_b, &500);
+    client.open_pot(&session_id, &player_a, &player_b, &500);
     client.stake(&session_id, &player_a);
     client.stake(&session_id, &player_b);
 
-    let result = client.try_resolve(&resolver, &session_id, &outsider);
+    let result = client.try_resolve(&session_id, &outsider);
     assert_eq!(result, Err(Ok(Error::InvalidWinner)));
 }
