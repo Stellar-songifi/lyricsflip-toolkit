@@ -235,3 +235,7 @@ remain in git history and in `lyricsflip`.
 
 - [`lyricsflip`](https://github.com/Stellar-songifi/lyricsflip) — the LyricsFlip web game and its game contracts
 - [`Lyricsflip_server`](https://github.com/Stellar-songifi/Lyricsflip_server) — the original standalone server
+
+## License
+
+[MIT](LICENSE) © 2026 LyricsFlip contributors.
