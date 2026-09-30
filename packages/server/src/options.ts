@@ -1,4 +1,5 @@
 import type { SettlementMode } from './escrow/escrow.gateway';
+import type { PvpEvent } from './wager/wager.events';
 
 export const PVP_SETTLEMENT_OPTIONS = Symbol('PVP_SETTLEMENT_OPTIONS');
 
@@ -70,6 +71,11 @@ export interface PvpSettlementOptions {
   /** Seconds both players have to stake before the wager is refunded. Default 900. */
   stakeWindowSeconds?: number;
   reconcile?: ReconcileOptions;
+  /**
+   * Called after each wager status change, e.g. to notify players. Runs
+   * after the change is committed; errors are logged and swallowed.
+   */
+  onEvent?: (event: PvpEvent) => void;
   /** Mount the HTTP controllers. Default true. */
   controllers?: boolean;
 }
