@@ -4,7 +4,7 @@ import { colors, spacing } from '../lib/theme';
 
 const OUTCOME_COLOR: Record<GuessOutcome, string> = {
   correct: colors.success,
-  close: colors.accent300,
+  partial: colors.accent300,
   miss: colors.error,
 };
 

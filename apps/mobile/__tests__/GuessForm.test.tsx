@@ -29,10 +29,13 @@ describe('GuessForm', () => {
 });
 
 describe('haptics', () => {
-  it('buzzes on a correct guess only', () => {
+  it('buzzes on a correct guess, taps on a partial one, and stays still on a miss', () => {
     hapticForOutcome('correct');
     expect(Haptics.notificationAsync).toHaveBeenCalledWith('success');
+    hapticForOutcome('partial');
+    expect(Haptics.impactAsync).toHaveBeenCalledWith('light');
     hapticForOutcome('miss');
     expect(Haptics.notificationAsync).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
   });
 });

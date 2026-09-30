@@ -18,7 +18,7 @@ export interface PublicLyric {
   decade: number;
 }
 
-export type GuessOutcome = 'correct' | 'close' | 'miss';
+export type GuessOutcome = 'correct' | 'partial' | 'miss';
 
 export interface GuessResult {
   outcome: GuessOutcome;
