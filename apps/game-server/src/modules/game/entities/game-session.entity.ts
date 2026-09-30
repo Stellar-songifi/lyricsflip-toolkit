@@ -19,9 +19,8 @@ export enum GameSessionStatus {
 }
 
 /**
- * A Postgres-side record of a game session. `lyricsflip` (onchain) also
- * models rounds independently — see README.md#how-the-pieces-fit-together
- * for the open question of which side is the source of truth.
+ * A game session. Rounds live only in Postgres — there is no on-chain copy
+ * of game state; the chain only holds stakes (see `contracts/pvp-escrow`).
  */
 @Entity('game_sessions')
 export class GameSession {
