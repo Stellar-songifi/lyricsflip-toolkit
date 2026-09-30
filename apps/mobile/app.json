@@ -16,18 +16,27 @@
       "intentFilters": [
         {
           "action": "VIEW",
-          "data": [{ "scheme": "lyricsflip" }],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "data": [
+            {
+              "scheme": "lyricsflip"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      ["expo-notifications", { "color": "#5B21B6" }]
-    ],
-    "experiments": {
-      "typedRoutes": true
-    }
+      [
+        "expo-notifications",
+        {
+          "color": "#5B21B6"
+        }
+      ]
+    ]
   }
 }
