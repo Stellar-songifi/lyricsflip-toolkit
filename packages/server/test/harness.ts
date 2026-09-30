@@ -87,6 +87,7 @@ export interface Harness {
   app: INestApplication;
   wagers: WagerService;
   links: WalletLinkService;
+  /** The fault-injecting mock gateway (only when `scripted`). */
   gateway: ScriptedGateway;
   dataSource: DataSource;
   events: PvpEvent[];
@@ -98,7 +99,10 @@ export interface Harness {
  * Boots the module against a fresh Postgres schema, in mock mode, with
  * players authenticated by an `x-player` header.
  */
-export async function createHarness(overrides: Partial<PvpSettlementOptions> = {}): Promise<Harness> {
+export async function createHarness(
+  overrides: Partial<PvpSettlementOptions> = {},
+  { scripted = true }: { scripted?: boolean } = {},
+): Promise<Harness> {
   const schema = `pvp_test_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const admin = new Client({ connectionString: DATABASE_URL });
   await admin.connect();
@@ -107,7 +111,7 @@ export async function createHarness(overrides: Partial<PvpSettlementOptions> = {
 
   const events: PvpEvent[] = [];
   const sep10Keypair = Keypair.random();
-  const moduleRef = await Test.createTestingModule({
+  const builder = Test.createTestingModule({
     imports: [
       TypeOrmModule.forRoot({
         type: 'postgres',
@@ -130,13 +134,14 @@ export async function createHarness(overrides: Partial<PvpSettlementOptions> = {
         ...overrides,
       }),
     ],
-  })
-    .overrideProvider(ESCROW_GATEWAY)
-    .useFactory({
-      factory: (mock: MockEscrowGateway) => new ScriptedGateway(mock),
-      inject: [MockEscrowGateway],
-    })
-    .compile();
+  });
+  const moduleRef = await (scripted
+    ? builder.overrideProvider(ESCROW_GATEWAY).useFactory({
+        factory: (mock: MockEscrowGateway) => new ScriptedGateway(mock),
+        inject: [MockEscrowGateway],
+      })
+    : builder
+  ).compile();
 
   const app = moduleRef.createNestApplication();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
