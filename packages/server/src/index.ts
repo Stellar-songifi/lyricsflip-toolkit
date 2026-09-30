@@ -1,4 +1,3 @@
-export * from './amount';
 export * from './options';
 export * from './pvp-settlement.module';
 export * from './migrations';
@@ -6,8 +5,9 @@ export * from './escrow/escrow.gateway';
 export { MockEscrowGateway } from './escrow/mock-escrow.gateway';
 export { MockPot } from './escrow/mock-pot.entity';
 export { StellarEscrowGateway } from './escrow/stellar-escrow.gateway';
-export * from './stellar/soroban-rpc';
-export * from './stellar/pvp-escrow-client';
+// The contract client and amount helpers live in @lyricsflip-toolkit/sdk;
+// re-exported so a server needs only one import.
+export * from '@lyricsflip-toolkit/sdk';
 export { Wager, WagerStatus, SettlementKind, TERMINAL_STATUSES } from './wager/wager.entity';
 export { WagerService } from './wager/wager.service';
 export type { CreateWagerInput, MatchResult } from './wager/wager.service';

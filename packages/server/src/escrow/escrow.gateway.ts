@@ -1,4 +1,4 @@
-import { Stroops } from '../amount';
+import { Stroops } from '@lyricsflip-toolkit/sdk';
 
 /** DI token for the active {@link EscrowGateway}. */
 export const ESCROW_GATEWAY = Symbol('ESCROW_GATEWAY');

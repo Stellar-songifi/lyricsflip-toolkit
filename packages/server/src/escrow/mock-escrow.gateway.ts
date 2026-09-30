@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { In, Repository } from 'typeorm';
-import { multiplyStroops } from '../amount';
+import { multiplyStroops } from '@lyricsflip-toolkit/sdk';
 import {
   EscrowGateway,
   OpenPotOutcome,

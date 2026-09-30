@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
-import { InvalidAmountError, assertPositiveStroops } from '../amount';
+import { InvalidAmountError, assertPositiveStroops } from '@lyricsflip-toolkit/sdk';
 import { ESCROW_GATEWAY, EscrowGateway, SubmitOutcome, UnsignedStake } from '../escrow/escrow.gateway';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
 import { WalletLinkService } from '../wallet/wallet-link.service';
