@@ -47,10 +47,10 @@ game can reuse them.
 
 | Part | What it is |
 |---|---|
-| `contracts/pvp-escrow` | Soroban contract: one pot per match, keyed by the game's session ID. The resolver can only pay a player who staked in that pot. |
-| `packages/sdk` | TypeScript client for the contract: builds unsigned stake transactions for the player's wallet, and handles amounts as stroop strings, never floats. |
+| `contracts/pvp-escrow` | Soroban contract: one pot per match, keyed by the wager's UUID. The resolver can only pay a player who staked in that pot, and after a timeout players can reclaim their own stakes. |
+| `packages/sdk` | TypeScript client for the contract: builds unsigned stake and timeout-claim transactions for the player's wallet, and handles amounts as stroop strings, never floats. Runs in Node and React Native. |
 | `packages/server` | NestJS module: wager state machine, server-side settlement, crash-safe reconciliation, SEP-10 wallet linking. |
-| `apps/game-server` | The LyricsFlip game backend (lyrics, rooms, daily challenge, XP), built on `packages/server`. |
+| `apps/game-server` | The LyricsFlip game backend (lyrics, solo, rooms, head-to-head, daily challenge, XP, push notifications), built on `packages/server`. |
 | `apps/mobile` | LyricsFlip for iOS and Android, built with Expo (React Native). |
 | `examples/coin-flip` | The smallest possible game using the toolkit. |
 
