@@ -237,3 +237,111 @@ fn an_unknown_pot_cannot_be_resolved() {
         Err(Ok(Error::PotNotFound))
     );
 }
+
+// --- staking and opening guards -----------------------------------------
+
+#[test]
+fn a_player_cannot_stake_twice() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &s.player_a),
+        Err(Ok(Error::AlreadyStaked))
+    );
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE - STAKE);
+}
+
+#[test]
+fn outsiders_cannot_stake() {
+    let s = Setup::new();
+    s.open();
+    let outsider = Address::generate(&s.env);
+
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &outsider),
+        Err(Ok(Error::NotAPlayerInPot))
+    );
+}
+
+#[test]
+fn a_player_who_cannot_cover_the_stake_is_refused() {
+    let s = Setup::new();
+    s.escrow.open_pot(
+        &s.session_id,
+        &s.player_a,
+        &s.player_b,
+        &(START_BALANCE + 1),
+        &TIMEOUT,
+    );
+
+    assert!(s.escrow.try_stake(&s.session_id, &s.player_a).is_err());
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+    assert!(!s.escrow.get_pot(&s.session_id).player_a_staked);
+}
+
+#[test]
+fn staking_into_a_staked_pot_is_refused() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotOpen))
+    );
+}
+
+#[test]
+fn staking_into_an_unknown_pot_is_refused() {
+    let s = Setup::new();
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotFound))
+    );
+}
+
+#[test]
+fn stakes_must_be_positive() {
+    let s = Setup::new();
+    for amount in [0i128, -1] {
+        assert_eq!(
+            s.escrow
+                .try_open_pot(&s.session_id, &s.player_a, &s.player_b, &amount, &TIMEOUT),
+            Err(Ok(Error::InvalidStakeAmount))
+        );
+    }
+}
+
+#[test]
+fn a_player_cannot_play_themselves() {
+    let s = Setup::new();
+    assert_eq!(
+        s.escrow
+            .try_open_pot(&s.session_id, &s.player_a, &s.player_a, &STAKE, &TIMEOUT),
+        Err(Ok(Error::SamePlayer))
+    );
+}
+
+#[test]
+fn a_session_cannot_be_reused() {
+    let s = Setup::new();
+    s.open();
+    assert_eq!(
+        s.escrow
+            .try_open_pot(&s.session_id, &s.player_a, &s.player_b, &STAKE, &TIMEOUT),
+        Err(Ok(Error::PotAlreadyExists))
+    );
+}
+
+#[test]
+fn timeouts_must_be_within_bounds() {
+    let s = Setup::new();
+    for timeout in [0, MIN_TIMEOUT_LEDGERS - 1, MAX_TIMEOUT_LEDGERS + 1] {
+        assert_eq!(
+            s.escrow
+                .try_open_pot(&s.session_id, &s.player_a, &s.player_b, &STAKE, &timeout),
+            Err(Ok(Error::InvalidTimeout))
+        );
+    }
+}
