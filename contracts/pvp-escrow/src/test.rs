@@ -699,3 +699,24 @@ fn there_is_no_initialize_entry_point_left_to_front_run() {
     );
     assert!(result.is_err());
 }
+
+// --- events -------------------------------------------------------------
+
+#[test]
+fn resolve_publishes_the_winner_and_payout() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::Event as _;
+
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    let expected = Resolved {
+        session_id: s.session_id.clone(),
+        winner: s.player_a.clone(),
+        payout: 2 * STAKE,
+    };
+    let events = s.env.events().all();
+    let last = events.events().last().expect("an event").clone();
+    assert_eq!(last, expected.to_xdr(&s.env, &s.escrow.address));
+}
