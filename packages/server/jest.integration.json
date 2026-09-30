@@ -1,0 +1,9 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testRegex": "test/.*\\.integration\\.ts$",
+  "transform": { "^.+\\.[tj]s$": ["ts-jest", { "tsconfig": { "allowJs": true } }] },
+  "transformIgnorePatterns": ["node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"],
+  "testEnvironment": "node",
+  "testTimeout": 120000
+}

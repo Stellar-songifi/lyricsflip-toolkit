@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "jest --runInBand",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test:integration": "jest --config jest.integration.json --runInBand"
   },
   "peerDependencies": {
     "@nestjs/common": "^11.0.0",
