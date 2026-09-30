@@ -1,0 +1,44 @@
+name: mobile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/sdk/**"
+      - "package-lock.json"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "packages/sdk/**"
+      - "package-lock.json"
+      - ".github/workflows/mobile.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Build the SDK the app depends on
+        run: npm run build -w @lyricsflip-toolkit/sdk
+
+      - name: Typecheck
+        run: npm run lint -w @lyricsflip-toolkit/mobile
+
+      - name: Tests
+        run: npm test -w @lyricsflip-toolkit/mobile
+
+      - name: Bundle for Android (Metro + Hermes)
+        working-directory: apps/mobile
+        env:
+          CI: "1"
+        run: npx expo export --platform android --output-dir .expo-export
