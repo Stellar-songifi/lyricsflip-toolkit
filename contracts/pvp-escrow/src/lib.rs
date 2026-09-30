@@ -248,9 +248,11 @@ impl PvpEscrow {
 
         if pot.player_a_staked {
             token_client.transfer(&contract_address, &pot.player_a, &pot.stake_amount);
+            pot.player_a_staked = false;
         }
         if pot.player_b_staked {
             token_client.transfer(&contract_address, &pot.player_b, &pot.stake_amount);
+            pot.player_b_staked = false;
         }
 
         pot.status = PotStatus::Refunded;

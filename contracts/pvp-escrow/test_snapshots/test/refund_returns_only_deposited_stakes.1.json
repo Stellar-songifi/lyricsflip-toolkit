@@ -360,7 +360,7 @@
                       "symbol": "player_a_staked"
                     },
                     "val": {
-                      "bool": true
+                      "bool": false
                     }
                   },
                   {
