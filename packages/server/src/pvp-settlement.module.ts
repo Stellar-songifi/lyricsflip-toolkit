@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ESCROW_GATEWAY, EscrowGateway } from './escrow/escrow.gateway';
 import { MockEscrowGateway } from './escrow/mock-escrow.gateway';
 import { MockPot } from './escrow/mock-pot.entity';
+import { StellarEscrowGateway } from './escrow/stellar-escrow.gateway';
 import { PvpPlayerGuard } from './http/player.guard';
 import { WagerController } from './http/wager.controller';
 import { WalletController } from './http/wallet.controller';
@@ -75,10 +76,8 @@ export class PvpSettlementModule {
         {
           provide: ESCROW_GATEWAY,
           inject: [PVP_SETTLEMENT_OPTIONS, MockEscrowGateway],
-          useFactory: (options: PvpSettlementOptions, mock: MockEscrowGateway): EscrowGateway => {
-            if (options.mode === 'mock') return mock;
-            throw new Error('Settlement mode "stellar" is not available in this build');
-          },
+          useFactory: (options: PvpSettlementOptions, mock: MockEscrowGateway): EscrowGateway =>
+            options.mode === 'stellar' ? new StellarEscrowGateway(options) : mock,
         },
         WalletLinkService,
         Sep10Service,
