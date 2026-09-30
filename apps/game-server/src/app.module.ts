@@ -18,6 +18,7 @@ import { Lyric } from './modules/lyrics/entities/lyric.entity';
 import { GameSession } from './modules/game/entities/game-session.entity';
 import { Notification } from './modules/notifications/entities/notification.entity';
 import { Challenge } from './modules/challenges/entities/challenge.entity';
+import { PushToken } from './modules/push/push-token.entity';
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
           username: db.primary.username,
           password: db.primary.password,
           database: db.primary.name,
-          entities: [User, Lyric, GameSession, Notification, Challenge, ...PVP_ENTITIES],
+          entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, ...PVP_ENTITIES],
           synchronize: false,
           replication: db.replica
             ? {
