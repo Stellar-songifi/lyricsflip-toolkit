@@ -9,9 +9,9 @@ Your game server decides who won. A Soroban escrow contract holds both stakes an
 and it is built so that even a compromised server can't drain it.
 [LyricsFlip](https://github.com/Stellar-songifi/lyricsflip), a lyrics-guessing card game, is the reference game.
 
-> **Status: under active restructuring.** This repository is being turned from the LyricsFlip web
-> monorepo into a reusable toolkit. The status table below shows what is done and what is planned.
-> Nothing here is audited. Do not use it with real value yet.
+> **Status: working, unaudited.** Settlement runs end to end in `mock` mode and against a real Soroban
+> network in `stellar` mode, but nothing here has been audited. Do not use it with real value yet.
+> The status table below shows what is done and what is planned.
 
 ---
 
@@ -58,15 +58,17 @@ game can reuse them.
 
 | Item | State |
 |---|---|
-| Escrow contract (open pot, stake, resolve, refund) | Implemented |
-| Wager state machine and SEP-10 wallet login | Implemented |
-| Settlement in `mock` mode (balances in Postgres) | Implemented |
-| Settlement in `stellar` mode (real Soroban calls) | **Planned** — currently a stub |
-| Server-only settlement trigger | **Planned** — currently triggered by a client |
-| Contract timeout refunds and atomic constructor | **Planned** |
-| `packages/sdk` and `packages/server` extraction | **Planned** |
-| Expo mobile app | **Planned** |
-| `examples/coin-flip` | **Planned** |
+| Escrow contract: atomic constructor, open pot, stake, resolve, refund | Implemented |
+| Contract timeout: players reclaim their own stakes with `claim_refund` | Implemented |
+| Wager state machine, explicit accept by player two, SEP-10 wallet linking | Implemented |
+| Server-only settlement trigger (no client route settles) | Implemented |
+| Crash-safe reconciliation against the pot, with a background sweeper | Implemented |
+| Settlement in `mock` mode (pots in Postgres, no tokens move) | Implemented |
+| Settlement in `stellar` mode (real Soroban calls, non-custodial and testnet custodial) | Implemented; integration-tested on a local network |
+| `packages/sdk` (Node and React Native) and `packages/server` | Implemented |
+| Expo mobile app, v1 (testnet device wallet, free test token) | Implemented; bundles for Android, not yet run on a device in CI |
+| Passkey smart wallet on mobile | **Planned** — see [`docs/wallet-spike.md`](docs/wallet-spike.md) |
+| `examples/coin-flip` | Implemented |
 | Security audit | Not started |
 
 ## How it works
