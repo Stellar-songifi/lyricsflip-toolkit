@@ -35,6 +35,14 @@ export interface AppConfig {
     tokenContractId: string;
     resolverSecret: string;
   };
+  faucet: {
+    /** Secret of the account that holds the test stake token. Test networks only. */
+    secret: string;
+    /** `CODE:ISSUER` of the stake token's classic asset. */
+    asset: string;
+    /** Display amount sent per claim, e.g. `100`. */
+    amount: string;
+  };
   push: {
     /** Deliver through Expo. Off by default outside production. */
     enabled: boolean;
@@ -110,6 +118,11 @@ export default (): AppConfig => {
         settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
       tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
       resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+    },
+    faucet: {
+      secret: network === 'public' ? '' : (process.env.FAUCET_SECRET ?? ''),
+      asset: process.env.STELLAR_STAKE_ASSET ?? '',
+      amount: process.env.FAUCET_AMOUNT ?? '100',
     },
     push: {
       enabled:
