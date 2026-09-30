@@ -90,17 +90,23 @@ game can reuse them.
 ```
 
 A wager moves through `pending → awaiting_stakes → staked → settling → won | refunded`, with
-`failed` for anything that needs an operator.
+`cancelled` for a wager that ends before any money moves and `failed` for anything that needs an operator.
 
-1. **Open.** The server opens a pot for the match and asks each player to stake.
-2. **Stake.** Each player signs their own stake transaction in their wallet (non-custodial by default).
-   The wager becomes `staked` only when both stakes are confirmed.
-3. **Play.** The game runs off-chain as normal.
-4. **Settle.** When the match ends, the server alone calls `resolve` with the winner. The contract
-   refuses any winner who is not a player in that pot.
-5. **Recover.** If the server crashes mid-payout, the wager stays in `settling` with a transaction hash,
-   and reconciliation resolves it against the ledger. The server never makes a network call inside a
-   database transaction, because a database rollback can't undo a submitted Stellar transaction.
+1. **Propose.** Your game server creates a wager for two players with linked wallets. Nothing is
+   asked of player two yet.
+2. **Accept.** Player two explicitly accepts. Only then does the server open the pot on-chain.
+3. **Stake.** Each player signs their own stake transaction in their wallet (non-custodial by default).
+   The wager becomes `staked` only when the pot confirms both stakes.
+4. **Play.** The game runs off-chain as normal.
+5. **Settle.** When the match ends, the server alone calls `resolve` with the winner (or `refund` for a
+   draw). There is no client route for this. The contract refuses any winner who is not a player in that pot.
+6. **Recover.** The server records what it intends to do (payout to whom, or refund) before it submits
+   anything. If it crashes mid-payout, the wager stays in `settling`, and a background reconciler reads
+   the pot on-chain and moves the wager to its true final state. It is never marked `refunded` unless a
+   refund really happened. The server never makes a network call inside a database transaction, because
+   a database rollback can't undo a submitted Stellar transaction.
+7. **Escape hatch.** If the server disappears, each player can reclaim their own stake with
+   `claim_refund` once the pot's deadline ledger has passed.
 
 ## Repository layout
 
