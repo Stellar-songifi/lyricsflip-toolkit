@@ -13,9 +13,12 @@ export enum GameMode {
 }
 
 export enum GameSessionStatus {
+  /** Created, but not playable yet (a staked match waits for both stakes). */
   WAITING = 'waiting',
   ACTIVE = 'active',
   FINISHED = 'finished',
+  /** Never played: the stakes weren't made, or the match was abandoned. */
+  CANCELLED = 'cancelled',
 }
 
 /**
