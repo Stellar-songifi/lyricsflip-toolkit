@@ -126,18 +126,20 @@ lyricsflip-toolkit/
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22.12+ (`@stellar/stellar-sdk` 17 requires it)
 - PostgreSQL 14+
 - For contract work: Rust (see `.tool-versions`), the `wasm32v1-none` target, and the
   [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli)
-- For mobile: the Expo toolchain and an iOS simulator or Android emulator
+- For Stellar integration tests: Docker, to run `stellar/quickstart` locally
+- For mobile: the Expo toolchain, and Expo Go or an iOS simulator / Android emulator
 
-### Clone
+### Clone and build
 
 ```bash
 git clone https://github.com/Stellar-songifi/lyricsflip-toolkit.git
 cd lyricsflip-toolkit
 npm install
+npm run build        # builds packages/sdk and packages/server first; the apps import their dist
 ```
 
 ### Contracts
@@ -153,17 +155,29 @@ stellar contract build
 ```bash
 cd apps/game-server
 cp .env.example .env        # set DB_*, JWT_SECRET, PORT
-npm run migration:run
+npm run migration:run       # the game's migrations, then the toolkit's
+npm run seed                # optional: sample lyrics
 npm run start:dev
 ```
 
-Settlement defaults to `STELLAR_SETTLEMENT_MODE=mock`, which needs no Stellar setup.
+Settlement defaults to `STELLAR_SETTLEMENT_MODE=mock`, which needs no Stellar setup. The API docs are
+served at `/api/docs`.
 
 ### Mobile
 
 ```bash
 cd apps/mobile
+cp .env.example .env        # set EXPO_PUBLIC_API_URL to the game server (your LAN IP on a device)
 npx expo start
+```
+
+### Tests
+
+```bash
+npm test                    # unit and database tests (needs Postgres: PVP_TEST_DATABASE_URL)
+npm run test:e2e            # game-server end to end (E2E_DATABASE_URL)
+npm run test:integration -w @lyricsflip-toolkit/server   # real settlement on a local Stellar network
+cd contracts && cargo test
 ```
 
 Full setup, including env variables and testnet deployment, is in
