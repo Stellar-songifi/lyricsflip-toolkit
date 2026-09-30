@@ -28,7 +28,7 @@ export interface PvpSettlementAsyncOptions extends Pick<ModuleMetadata, 'imports
  * Staked head-to-head matches for a NestJS game server.
  *
  * Exports `WagerService` (the game server creates and settles wagers),
- * `WalletLinkService` and `Sep10Service`. The host app must register
+ * `WalletLinkService` and `Sep10Service`, globally. The host app must register
  * {@link PVP_ENTITIES} with TypeORM and run {@link PVP_MIGRATIONS}.
  */
 @Module({})
@@ -64,6 +64,9 @@ export class PvpSettlementModule {
     const controllers: Type[] = withControllers ? [WagerController, WalletController] : [];
     return {
       module: PvpSettlementModule,
+      // Global, so the host's own modules (auth, game logic) can inject
+      // WagerService and Sep10Service without registering the module twice.
+      global: true,
       imports: [...imports, TypeOrmModule.forFeature(PVP_ENTITIES)],
       controllers,
       providers: [
