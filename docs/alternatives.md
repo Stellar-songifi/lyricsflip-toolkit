@@ -14,4 +14,5 @@ the winner off-chain.** If your case is different, one of these may fit better.
 
 What lyricsflip-toolkit adds for PvP games: the server-side half. That means the wager state machine,
 server-only settlement, crash-safe reconciliation against the ledger, and SEP-10 wallet linking, together
-with a contract whose resolver can only pay a player in the pot.
+with a contract whose resolver can only pay a player in the pot and whose players can reclaim their
+stakes after a timeout. It also has a TypeScript SDK that runs in React Native.
