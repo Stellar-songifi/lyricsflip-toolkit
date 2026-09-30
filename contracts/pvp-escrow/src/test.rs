@@ -345,3 +345,157 @@ fn timeouts_must_be_within_bounds() {
         );
     }
 }
+
+// --- timeouts -----------------------------------------------------------
+
+#[test]
+fn claim_before_the_deadline_is_refused() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_a),
+        Err(Ok(Error::DeadlineNotReached))
+    );
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+}
+
+#[test]
+fn claim_exactly_at_the_deadline_is_refused() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    let deadline = s.escrow.get_pot(&s.session_id).deadline_ledger;
+    s.env.ledger().set_sequence_number(deadline);
+
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_a),
+        Err(Ok(Error::DeadlineNotReached))
+    );
+}
+
+#[test]
+fn each_player_can_reclaim_their_own_stake_after_the_deadline() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+
+    assert_eq!(s.escrow.claim_refund(&s.session_id, &s.player_a), STAKE);
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE - STAKE);
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Staked);
+
+    s.escrow.claim_refund(&s.session_id, &s.player_b);
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE);
+    assert_eq!(s.escrow_balance(), 0);
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Refunded);
+}
+
+#[test]
+fn a_player_cannot_claim_twice() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_a),
+        Err(Ok(Error::NothingToClaim))
+    );
+    assert_eq!(s.escrow_balance(), STAKE);
+}
+
+#[test]
+fn a_player_who_never_staked_has_nothing_to_claim() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+    s.pass_deadline();
+
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_b),
+        Err(Ok(Error::NothingToClaim))
+    );
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Refunded);
+}
+
+#[test]
+fn outsiders_cannot_claim() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    let outsider = Address::generate(&s.env);
+
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &outsider),
+        Err(Ok(Error::NotAPlayerInPot))
+    );
+}
+
+#[test]
+fn resolve_is_blocked_once_a_player_has_claimed() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+
+    assert_eq!(
+        s.escrow.try_resolve(&s.session_id, &s.player_b),
+        Err(Ok(Error::PotNotStaked))
+    );
+}
+
+#[test]
+fn resolve_still_works_after_the_deadline_if_nobody_claimed() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+
+    s.escrow.resolve(&s.session_id, &s.player_b);
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE + STAKE);
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotOpen))
+    );
+}
+
+#[test]
+fn resolver_refund_after_a_partial_claim_returns_only_what_is_left() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+
+    s.escrow.refund(&s.session_id);
+
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE);
+    assert_eq!(s.escrow_balance(), 0);
+}
+
+#[test]
+fn staking_after_the_deadline_is_refused() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+    s.pass_deadline();
+
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &s.player_b),
+        Err(Ok(Error::DeadlinePassed))
+    );
+}
+
+#[test]
+fn resolver_can_refund_before_the_deadline() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+
+    s.escrow.refund(&s.session_id);
+
+    assert_eq!(s.escrow_balance(), 0);
+    assert_eq!(
+        s.escrow.try_claim_refund(&s.session_id, &s.player_a),
+        Err(Ok(Error::PotNotOpen))
+    );
+}
