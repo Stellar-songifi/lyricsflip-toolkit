@@ -1,5 +1,6 @@
 import { Address, Keypair, Operation, Transaction, nativeToScVal, xdr } from '@stellar/stellar-sdk';
-import { Stroops, toBigInt } from '../amount';
+import { Stroops, toBigInt } from './amount';
+import { hexToBytes } from './bytes';
 import { SimulationError, SorobanRpc, Submission } from './soroban-rpc';
 
 /** Mirrors the contract's `PotStatus` (`#[repr(u32)]`: 0..3). */
@@ -183,7 +184,7 @@ export function potIdToScVal(potId: string): xdr.ScVal {
   if (!/^[0-9a-fA-F]{32}$/.test(hex)) {
     throw new Error(`Pot id "${potId}" is not a UUID`);
   }
-  return xdr.ScVal.scvBytes(Buffer.from(hex, 'hex'));
+  return xdr.ScVal.scvBytes(hexToBytes(hex));
 }
 
 export function addressToScVal(address: string): xdr.ScVal {
