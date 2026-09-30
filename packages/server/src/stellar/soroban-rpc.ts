@@ -147,7 +147,7 @@ export class SorobanRpc {
       return {
         status: 'failed',
         hash,
-        error: `Rejected: ${sent.errorResult?.result().switch().name ?? 'unknown'}`,
+        error: `Rejected by the network: ${sent.errorResult?.toXDR('base64') ?? 'no result'}`,
       };
     }
     // PENDING, or DUPLICATE (this exact transaction is already in flight).
