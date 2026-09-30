@@ -2,14 +2,16 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
 /**
- * `pending` -> `awaiting_stakes` -> `staked` -> `settling` -> `won` | `refunded`,
- * with `failed` for anything that needs an operator to reconcile against the
- * ledger. See README.md#wagers-and-settlement.
+ * `pending` → `awaiting_stakes` → `staked` → `settling` → `won` | `refunded`.
+ *
+ * - `cancelled`: ended before any money moved (declined, or never accepted).
+ * - `failed`: needs an operator; `failureReason` says why.
  */
 export enum WagerStatus {
   PENDING = 'pending',
@@ -18,48 +20,103 @@ export enum WagerStatus {
   SETTLING = 'settling',
   WON = 'won',
   REFUNDED = 'refunded',
+  CANCELLED = 'cancelled',
   FAILED = 'failed',
 }
 
-@Entity('wagers')
+/** What a settlement is trying to do. Recorded before any network call. */
+export enum SettlementKind {
+  PAYOUT = 'payout',
+  REFUND = 'refund',
+}
+
+export const TERMINAL_STATUSES: readonly WagerStatus[] = [
+  WagerStatus.WON,
+  WagerStatus.REFUNDED,
+  WagerStatus.CANCELLED,
+  WagerStatus.FAILED,
+];
+
+/**
+ * One staked head-to-head match. The wager's own `id` is the escrow pot key
+ * (a UUID is exactly the contract's 16-byte session id), so the game's match
+ * id can be any string.
+ */
+@Entity('pvp_wagers')
 export class Wager {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'uuid' })
-  gameSessionId: string;
+  /** The game's identifier for the match this wager is attached to. */
+  @Index({ unique: true })
+  @Column({ type: 'varchar', length: 128 })
+  matchId: string;
 
-  @Column({ type: 'uuid' })
+  /** The player who proposed the wager. */
+  @Column({ type: 'varchar', length: 128 })
   playerAId: string;
 
-  @Column({ type: 'uuid' })
+  /** The invited player. Nothing is asked of them until they accept. */
+  @Column({ type: 'varchar', length: 128 })
   playerBId: string;
 
-  /** Stroops, carried as a string — never a float. 7 decimal places. */
-  @Column({ type: 'varchar' })
+  /** Stroops each player stakes, as a string — never a float. */
+  @Column({ type: 'varchar', length: 40 })
   stakeAmount: string;
 
-  @Column({ type: 'enum', enum: WagerStatus, default: WagerStatus.PENDING })
+  @Index()
+  @Column({ type: 'enum', enum: WagerStatus, enumName: 'pvp_wager_status', default: WagerStatus.PENDING })
   status: WagerStatus;
 
-  @Column({ default: false })
-  playerAStaked: boolean;
+  /** Wallets fixed when the pot is opened. Payouts go to these, not to a later link. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  playerAAddress: string | null;
 
-  @Column({ default: false })
-  playerBStaked: boolean;
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  playerBAddress: string | null;
 
-  @Column({ type: 'uuid', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
+  acceptedAt: Date | null;
+
+  /** Ledger after which players can reclaim their own stakes on-chain. */
+  @Column({ type: 'integer', nullable: true })
+  potDeadlineLedger: number | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  playerAStakeTxHash: string | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  playerBStakeTxHash: string | null;
+
+  /** Set only once the stake is confirmed (on-chain, or recorded in mock mode). */
+  @Column({ type: 'timestamptz', nullable: true })
+  playerAStakedAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  playerBStakedAt: Date | null;
+
+  @Column({ type: 'enum', enum: SettlementKind, enumName: 'pvp_settlement_kind', nullable: true })
+  settlementKind: SettlementKind | null;
+
+  /** Recorded with the settlement intent, before the payout is submitted. */
+  @Column({ type: 'varchar', length: 128, nullable: true })
   winnerId: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', length: 128, nullable: true })
   settlementTxHash: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'integer', nullable: true })
+  settlementLedger: number | null;
+
+  @Column({ type: 'integer', default: 0 })
+  reconcileAttempts: number;
+
+  @Column({ type: 'text', nullable: true })
   failureReason: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }
