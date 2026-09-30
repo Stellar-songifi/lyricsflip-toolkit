@@ -499,3 +499,203 @@ fn resolver_can_refund_before_the_deadline() {
         Err(Ok(Error::PotNotOpen))
     );
 }
+
+// --- authorisation ------------------------------------------------------
+
+use soroban_sdk::testutils::{AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke};
+use soroban_sdk::{IntoVal, Symbol};
+
+impl Setup<'_> {
+    /// Replaces the blanket auth mock with a single signature from `signer`
+    /// over `function(args)`.
+    fn only_signed_by(
+        &self,
+        signer: &Address,
+        function: &str,
+        args: soroban_sdk::Vec<soroban_sdk::Val>,
+    ) {
+        self.env.mock_auths(&[MockAuth {
+            address: signer,
+            invoke: &MockAuthInvoke {
+                contract: &self.escrow.address,
+                fn_name: function,
+                args,
+                sub_invokes: &[],
+            },
+        }]);
+    }
+
+    fn last_auth_was(&self, signer: &Address, function: &str) -> bool {
+        self.env.auths().iter().any(|(address, invocation)| {
+            address == signer
+                && matches!(
+                    invocation,
+                    AuthorizedInvocation {
+                        function: AuthorizedFunction::Contract((contract, name, _)),
+                        ..
+                    } if *contract == self.escrow.address && *name == Symbol::new(&self.env, function)
+                )
+        })
+    }
+}
+
+#[test]
+fn resolve_requires_the_resolver_signature() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    assert!(s.last_auth_was(&s.resolver, "resolve"));
+}
+
+#[test]
+fn a_player_cannot_resolve_in_their_own_favour() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.only_signed_by(
+        &s.player_a,
+        "resolve",
+        (s.session_id.clone(), s.player_a.clone()).into_val(&s.env),
+    );
+
+    assert!(s.escrow.try_resolve(&s.session_id, &s.player_a).is_err());
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+}
+
+#[test]
+fn only_the_resolver_can_open_a_pot() {
+    let s = Setup::new();
+    let outsider = Address::generate(&s.env);
+    s.only_signed_by(
+        &outsider,
+        "open_pot",
+        (
+            s.session_id.clone(),
+            s.player_a.clone(),
+            s.player_b.clone(),
+            STAKE,
+            TIMEOUT,
+        )
+            .into_val(&s.env),
+    );
+
+    assert!(s
+        .escrow
+        .try_open_pot(&s.session_id, &s.player_a, &s.player_b, &STAKE, &TIMEOUT)
+        .is_err());
+}
+
+#[test]
+fn only_the_resolver_can_refund() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.only_signed_by(
+        &s.player_a,
+        "refund",
+        (s.session_id.clone(),).into_val(&s.env),
+    );
+
+    assert!(s.escrow.try_refund(&s.session_id).is_err());
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+}
+
+#[test]
+fn a_stake_needs_the_players_own_signature() {
+    let s = Setup::new();
+    s.open();
+    s.only_signed_by(
+        &s.resolver,
+        "stake",
+        (s.session_id.clone(), s.player_b.clone()).into_val(&s.env),
+    );
+
+    assert!(s.escrow.try_stake(&s.session_id, &s.player_b).is_err());
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE);
+}
+
+#[test]
+fn nobody_can_claim_another_players_stake() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    s.only_signed_by(
+        &s.player_b,
+        "claim_refund",
+        (s.session_id.clone(), s.player_a.clone()).into_val(&s.env),
+    );
+
+    assert!(s
+        .escrow
+        .try_claim_refund(&s.session_id, &s.player_a)
+        .is_err());
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+}
+
+#[test]
+fn only_the_admin_can_rotate_the_resolver() {
+    let s = Setup::new();
+    let attacker = Address::generate(&s.env);
+    s.only_signed_by(
+        &s.resolver,
+        "set_resolver",
+        (attacker.clone(),).into_val(&s.env),
+    );
+
+    assert!(s.escrow.try_set_resolver(&attacker).is_err());
+    assert_eq!(s.escrow.get_config().resolver, s.resolver);
+}
+
+#[test]
+fn the_admin_can_rotate_the_resolver() {
+    let s = Setup::new();
+    let new_resolver = Address::generate(&s.env);
+
+    s.escrow.set_resolver(&new_resolver);
+
+    assert!(s.last_auth_was(&s.admin, "set_resolver"));
+    assert_eq!(s.escrow.get_config().resolver, new_resolver);
+}
+
+#[test]
+fn only_the_admin_can_hand_over_the_admin_role() {
+    let s = Setup::new();
+    let attacker = Address::generate(&s.env);
+    s.only_signed_by(&attacker, "set_admin", (attacker.clone(),).into_val(&s.env));
+
+    assert!(s.escrow.try_set_admin(&attacker).is_err());
+    assert_eq!(s.escrow.get_config().admin, s.admin);
+}
+
+#[test]
+fn deploying_requires_the_admin_signature() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.register(PvpEscrow, (&admin, &resolver, &token));
+
+    let auths = env.auths();
+    assert!(
+        auths.iter().any(|(address, invocation)| *address == admin
+            && matches!(
+                invocation.function,
+                AuthorizedFunction::Contract((_, ref name, _)) if *name == Symbol::new(&env, "__constructor")
+            )),
+        "constructor did not require admin auth: {:?}",
+        auths
+    );
+}
+
+#[test]
+fn there_is_no_initialize_entry_point_left_to_front_run() {
+    let s = Setup::new();
+    let result = s.env.try_invoke_contract::<(), Error>(
+        &s.escrow.address,
+        &Symbol::new(&s.env, "initialize"),
+        (s.admin.clone(), s.resolver.clone(), s.token.address.clone()).into_val(&s.env),
+    );
+    assert!(result.is_err());
+}
