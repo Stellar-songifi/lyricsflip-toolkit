@@ -1,0 +1,67 @@
+name: integration
+
+# Real settlement against a throwaway local Stellar network. Never testnet or
+# mainnet: the network is started inside the job and discarded with it.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "packages/server/**"
+      - "packages/sdk/**"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  stellar-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lyricsflip_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PVP_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start a local Stellar network
+        run: docker run -d --name stellar -p 8000:8000 stellar/quickstart:latest --local --enable core,rpc
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Build pvp-escrow
+        working-directory: contracts
+        run: cargo build --target wasm32v1-none --release
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Wait for the network
+        run: |
+          for i in $(seq 1 60); do
+            curl -s -X POST localhost:8000/rpc -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q healthy && exit 0
+            sleep 5
+          done
+          docker logs stellar | tail -50
+          exit 1
+
+      - name: Integration tests
+        run: npm run test:integration -w @lyricsflip-toolkit/server
