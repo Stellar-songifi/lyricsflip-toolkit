@@ -12,6 +12,8 @@ import { GameModule } from './modules/game/game.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChallengesModule } from './modules/challenges/challenges.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
+import { DailyModule } from './modules/daily/daily.module';
+import { PushModule } from './modules/push/push.module';
 import { PVP_ENTITIES } from '@lyricsflip-toolkit/server';
 import { User } from './modules/users/entities/user.entity';
 import { Lyric } from './modules/lyrics/entities/lyric.entity';
@@ -19,6 +21,8 @@ import { GameSession } from './modules/game/entities/game-session.entity';
 import { Notification } from './modules/notifications/entities/notification.entity';
 import { Challenge } from './modules/challenges/entities/challenge.entity';
 import { PushToken } from './modules/push/push-token.entity';
+import { DailyChallenge } from './modules/daily/entities/daily-challenge.entity';
+import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
 
 @Module({
   imports: [
@@ -35,7 +39,7 @@ import { PushToken } from './modules/push/push-token.entity';
           username: db.primary.username,
           password: db.primary.password,
           database: db.primary.name,
-          entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, ...PVP_ENTITIES],
+          entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, DailyChallenge, DailyAttempt, ...PVP_ENTITIES],
           synchronize: false,
           replication: db.replica
             ? {
@@ -65,6 +69,8 @@ import { PushToken } from './modules/push/push-token.entity';
     LyricsModule,
     GameModule,
     SettlementModule,
+    DailyModule,
+    PushModule,
     NotificationsModule,
     ChallengesModule,
   ],
