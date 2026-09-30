@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { multiplyStroops } from '../amount';
 import {
   EscrowGateway,
@@ -101,9 +101,11 @@ export class MockEscrowGateway implements EscrowGateway {
     }
     if (winner !== pot.playerA && winner !== pot.playerB) return failed('InvalidWinner');
 
-    pot.status = 'resolved';
-    pot.winner = winner;
-    await this.pots.save(pot);
+    const took = await this.pots.update(
+      { id: potId, status: 'staked', playerAStaked: true, playerBStaked: true },
+      { status: 'resolved', winner },
+    );
+    if (!took.affected) return failed('PotNotStaked');
     this.logger.debug(
       `[mock] resolve ${potId} winner=${winner} payout=${multiplyStroops(pot.stakeAmount, 2)}`,
     );
@@ -115,10 +117,11 @@ export class MockEscrowGateway implements EscrowGateway {
     if (!pot) return failed('PotNotFound');
     if (pot.status !== 'open' && pot.status !== 'staked') return failed('PotNotOpen');
 
-    pot.status = 'refunded';
-    pot.playerAStaked = false;
-    pot.playerBStaked = false;
-    await this.pots.save(pot);
+    const took = await this.pots.update(
+      { id: potId, status: In(['open', 'staked']) },
+      { status: 'refunded', playerAStaked: false, playerBStaked: false },
+    );
+    if (!took.affected) return failed('PotNotOpen');
     this.logger.debug(`[mock] refund ${potId}`);
     return confirmed();
   }
