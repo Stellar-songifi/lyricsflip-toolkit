@@ -31,8 +31,8 @@ fn full_wager_lifecycle_pays_the_winner() {
     token_admin_client.mint(&player_a, &1_000);
     token_admin_client.mint(&player_b, &1_000);
 
-    let contract_id = env.register(LyricsFlipEscrowContract, ());
-    let client = LyricsFlipEscrowContractClient::new(&env, &contract_id);
+    let contract_id = env.register(PvpEscrow, ());
+    let client = PvpEscrowClient::new(&env, &contract_id);
     client.initialize(&admin, &resolver, &token_address);
 
     let session_id = BytesN::from_array(&env, &[7u8; 16]);
@@ -65,8 +65,8 @@ fn refund_returns_only_deposited_stakes() {
     let token_client = token::Client::new(&env, &token_address);
     token_admin_client.mint(&player_a, &1_000);
 
-    let contract_id = env.register(LyricsFlipEscrowContract, ());
-    let client = LyricsFlipEscrowContractClient::new(&env, &contract_id);
+    let contract_id = env.register(PvpEscrow, ());
+    let client = PvpEscrowClient::new(&env, &contract_id);
     client.initialize(&admin, &resolver, &token_address);
 
     let session_id = BytesN::from_array(&env, &[9u8; 16]);
@@ -94,8 +94,8 @@ fn resolver_cannot_pay_someone_outside_the_pot() {
     token_admin_client.mint(&player_a, &1_000);
     token_admin_client.mint(&player_b, &1_000);
 
-    let contract_id = env.register(LyricsFlipEscrowContract, ());
-    let client = LyricsFlipEscrowContractClient::new(&env, &contract_id);
+    let contract_id = env.register(PvpEscrow, ());
+    let client = PvpEscrowClient::new(&env, &contract_id);
     client.initialize(&admin, &resolver, &token_address);
 
     let session_id = BytesN::from_array(&env, &[3u8; 16]);

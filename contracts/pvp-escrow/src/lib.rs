@@ -1,12 +1,17 @@
 #![no_std]
 
-//! One wager pot per game session, keyed by the session UUID (as raw bytes).
+//! Escrow for head-to-head (PvP) matches whose result is decided off-chain.
 //!
-//! The resolver key can pick a winner but can only pay a player who already
+//! One pot exists per match, keyed by the game server's session UUID (as its
+//! 16 raw bytes). Both players stake an equal amount, and a single `resolver`
+//! account held by the game server later pays the pot to the winner or
+//! refunds it.
+//!
+//! The resolver can pick a winner but can only pay a player who already
 //! staked into that specific pot, and `refund` only ever returns each stake
-//! to whoever deposited it. A compromised backend resolver key can choose
-//! the wrong winner but can't drain the contract or redirect funds to an
-//! arbitrary address.
+//! to whoever deposited it. A compromised resolver key can choose the wrong
+//! one of the two players but can't drain the contract or redirect funds to
+//! an arbitrary address.
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env,
@@ -61,10 +66,10 @@ pub enum Error {
 }
 
 #[contract]
-pub struct LyricsFlipEscrowContract;
+pub struct PvpEscrow;
 
 #[contractimpl]
-impl LyricsFlipEscrowContract {
+impl PvpEscrow {
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -99,8 +104,8 @@ impl LyricsFlipEscrowContract {
         Ok(())
     }
 
-    /// Opens a pot for a head-to-head session. Called by the backend after
-    /// both players have agreed to an equal stake; no funds move yet.
+    /// Opens a pot for a match. Called by the game server after both players
+    /// have agreed to an equal stake; no funds move yet.
     pub fn open_pot(
         env: Env,
         resolver: Address,
@@ -255,7 +260,7 @@ impl LyricsFlipEscrowContract {
     }
 }
 
-impl LyricsFlipEscrowContract {
+impl PvpEscrow {
     fn require_resolver(env: &Env, caller: &Address) -> Result<(), Error> {
         let resolver: Address = env
             .storage()
