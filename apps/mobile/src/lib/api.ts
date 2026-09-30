@@ -175,6 +175,14 @@ export function createApi(baseUrl: string, getToken: () => string | null, fetchI
       stake: (id: string, signedTransactionXdr?: string) =>
         request<Wager>('POST', `/wagers/${id}/stake`, signedTransactionXdr ? { signedTransactionXdr } : {}),
     },
+    faucet: {
+      info: () =>
+        request<{ enabled: boolean; asset: string | null; amount: string | null; rpcUrl: string | null; networkPassphrase: string | null }>(
+          'GET',
+          '/faucet',
+        ),
+      claim: () => request<{ txHash: string; amount: string }>('POST', '/faucet'),
+    },
     notifications: {
       list: () => request<Notification[]>('GET', '/notifications'),
     },
