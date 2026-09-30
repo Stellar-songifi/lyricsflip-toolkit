@@ -22,6 +22,14 @@ export interface GuessResult {
   sessionStatus: GameSessionStatus;
 }
 
+/** Emitted once, by the server, when a session's last round is scored. */
+export interface SessionFinishedEvent {
+  sessionId: string;
+  mode: GameMode;
+  playerIds: string[];
+  scores: Record<string, number>;
+}
+
 const ROUNDS_PER_SESSION = 10;
 
 @Injectable()
@@ -39,12 +47,21 @@ export class GameService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  async createSession(hostUserId: string, mode: GameMode): Promise<GameSession> {
+  /**
+   * Starts a session. With `waitForStakes`, it stays `waiting` until
+   * {@link activate} is called, so a staked match can't be played before
+   * both stakes are confirmed.
+   */
+  async createSession(
+    hostUserId: string,
+    mode: GameMode,
+    options: { waitForStakes?: boolean } = {},
+  ): Promise<GameSession> {
     const lyric = await this.lyricsService.getRandom();
 
     const session = this.sessionsRepository.create({
       mode,
-      status: GameSessionStatus.ACTIVE,
+      status: options.waitForStakes ? GameSessionStatus.WAITING : GameSessionStatus.ACTIVE,
       playerIds: [hostUserId],
       currentLyricId: lyric.id,
       currentRound: 1,
@@ -58,8 +75,11 @@ export class GameService {
 
   async joinSession(sessionId: string, userId: string): Promise<GameSession> {
     const session = await this.getSession(sessionId);
-    if (session.status !== GameSessionStatus.WAITING && session.mode === GameMode.ROOM) {
-      // Rooms can be joined mid-round; head-to-head cannot.
+    if (session.status === GameSessionStatus.FINISHED || session.status === GameSessionStatus.CANCELLED) {
+      throw new BadRequestException('This session is over');
+    }
+    if (session.mode === GameMode.SOLO && !session.playerIds.includes(userId)) {
+      throw new BadRequestException('Solo sessions only take one player');
     }
     if (session.mode === GameMode.HEAD_TO_HEAD && session.playerIds.length >= 2) {
       throw new BadRequestException('Head-to-head sessions only take two players');
@@ -70,6 +90,23 @@ export class GameService {
       await this.sessionsRepository.save(session);
     }
     return session;
+  }
+
+  /** Makes a waiting session playable. No-op if it's already active. */
+  async activate(sessionId: string): Promise<GameSession> {
+    await this.sessionsRepository.update(
+      { id: sessionId, status: GameSessionStatus.WAITING },
+      { status: GameSessionStatus.ACTIVE },
+    );
+    return this.getSession(sessionId);
+  }
+
+  /** Cancels a session that hasn't started. A played session is left alone. */
+  async cancel(sessionId: string): Promise<void> {
+    await this.sessionsRepository.update(
+      { id: sessionId, status: GameSessionStatus.WAITING },
+      { status: GameSessionStatus.CANCELLED },
+    );
   }
 
   async getSession(sessionId: string): Promise<GameSession> {
@@ -133,6 +170,18 @@ export class GameService {
     }
 
     await this.sessionsRepository.save(session);
+
+    if (session.status === GameSessionStatus.FINISHED) {
+      // The server, not a client, announces the end of a match; settlement
+      // listens for this. See SettlementListener.
+      const finished: SessionFinishedEvent = {
+        sessionId,
+        mode: session.mode,
+        playerIds: [...session.playerIds],
+        scores: { ...session.scores },
+      };
+      this.eventEmitter.emit('game.session.finished', finished);
+    }
 
     this.eventEmitter.emit('guess.submitted', {
       sessionId,
