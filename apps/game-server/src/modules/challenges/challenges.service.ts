@@ -5,7 +5,7 @@ import { randomInt } from 'crypto';
 import { Challenge, ChallengeStatus } from './entities/challenge.entity';
 import { GameService } from '../game/game.service';
 import { GameMode } from '../game/entities/game-session.entity';
-import { WagerService } from '../wager/wager.service';
+import { WagerService, WalletLinkService } from '@lyricsflip-toolkit/server';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — easy to read aloud
 const CODE_LENGTH = 6;
@@ -14,6 +14,9 @@ const CHALLENGE_TTL_MS = 15 * 60 * 1000;
 export interface ChallengeSummary {
   code: string;
   status: ChallengeStatus;
+  hostUserId: string;
+  /** Stroops each player stakes, or null for an unstaked match. Shown before accepting. */
+  stakeAmount: string | null;
   gameSessionId: string | null;
   wagerId: string | null;
   expiresAt: Date;
@@ -31,9 +34,13 @@ export class ChallengesService {
     private readonly challengesRepository: Repository<Challenge>,
     private readonly gameService: GameService,
     private readonly wagerService: WagerService,
+    private readonly walletLinks: WalletLinkService,
   ) {}
 
   async create(hostUserId: string, stakeAmount?: string): Promise<ChallengeSummary> {
+    if (stakeAmount && !(await this.walletLinks.getAddress(hostUserId))) {
+      throw new BadRequestException('Link a wallet before creating a staked challenge');
+    }
     const code = await this.generateUniqueCode();
 
     const challenge = await this.challengesRepository.save(
@@ -55,9 +62,13 @@ export class ChallengesService {
   }
 
   /**
-   * Creates the head-to-head session (and, if the challenge carried a
-   * stake, the wager) and marks the challenge accepted. The host discovers
-   * the resulting session by polling `getByCode`.
+   * The joiner accepts the challenge — and, if it carries a stake, the wager
+   * with it: the code shows the stake before they accept, and accepting is
+   * their explicit agreement. Only then is the escrow pot opened and a stake
+   * requested from either player.
+   *
+   * A staked session stays `waiting` until both stakes are confirmed; the
+   * host discovers it by polling `getByCode`.
    */
   async accept(code: string, joinerUserId: string): Promise<AcceptChallengeResult> {
     const challenge = await this.expireIfDue(await this.loadByCode(code));
@@ -71,25 +82,41 @@ export class ChallengesService {
     if (challenge.hostUserId === joinerUserId) {
       throw new BadRequestException("You can't accept your own challenge");
     }
+    if (challenge.stakeAmount && !(await this.walletLinks.getAddress(joinerUserId))) {
+      throw new BadRequestException('Link a wallet before accepting a staked challenge');
+    }
 
-    const session = await this.gameService.createSession(challenge.hostUserId, GameMode.HEAD_TO_HEAD);
+    // Claim the challenge first so two joiners can't both accept it.
+    const claimed = await this.challengesRepository.update(
+      { id: challenge.id, status: ChallengeStatus.PENDING },
+      { status: ChallengeStatus.ACCEPTED },
+    );
+    if (!claimed.affected) {
+      throw new BadRequestException('This challenge has already been accepted');
+    }
+
+    const staked = Boolean(challenge.stakeAmount);
+    const session = await this.gameService.createSession(challenge.hostUserId, GameMode.HEAD_TO_HEAD, {
+      waitForStakes: staked,
+    });
     await this.gameService.joinSession(session.id, joinerUserId);
 
     let wagerId: string | null = null;
-    if (challenge.stakeAmount) {
-      const { wager } = await this.wagerService.createWager(
-        session.id,
-        challenge.hostUserId,
-        joinerUserId,
-        challenge.stakeAmount,
-      );
+    if (staked) {
+      const wager = await this.wagerService.create({
+        matchId: session.id,
+        playerAId: challenge.hostUserId,
+        playerBId: joinerUserId,
+        stakeAmount: challenge.stakeAmount as string,
+      });
       wagerId = wager.id;
+      await this.wagerService.accept(wager.id, joinerUserId);
     }
 
-    challenge.status = ChallengeStatus.ACCEPTED;
-    challenge.gameSessionId = session.id;
-    challenge.wagerId = wagerId;
-    await this.challengesRepository.save(challenge);
+    await this.challengesRepository.update(
+      { id: challenge.id },
+      { gameSessionId: session.id, wagerId },
+    );
 
     return { gameSessionId: session.id, wagerId };
   }
@@ -127,6 +154,8 @@ export class ChallengesService {
     return {
       code: challenge.code,
       status: challenge.status,
+      hostUserId: challenge.hostUserId,
+      stakeAmount: challenge.stakeAmount,
       gameSessionId: challenge.gameSessionId,
       wagerId: challenge.wagerId,
       expiresAt: challenge.expiresAt,
