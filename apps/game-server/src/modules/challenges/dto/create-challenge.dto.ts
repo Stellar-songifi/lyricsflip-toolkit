@@ -1,11 +1,8 @@
-import { IsNumberString, IsOptional, IsUUID } from 'class-validator';
+import { IsNumberString, IsOptional } from 'class-validator';
 
 export class CreateChallengeDto {
-  @IsUUID()
-  hostUserId: string;
-
   /** Stroops, as a string. Omit for an unstaked match. */
   @IsOptional()
-  @IsNumberString()
+  @IsNumberString({ no_symbols: true })
   stakeAmount?: string;
 }

@@ -1,17 +1,20 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ChallengesService } from './challenges.service';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
-import { AcceptChallengeDto } from './dto/accept-challenge.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUserId } from '../auth/decorators/current-user.decorator';
 
 @ApiTags('challenges')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('challenges')
 export class ChallengesController {
   constructor(private readonly challengesService: ChallengesService) {}
 
   @Post()
-  create(@Body() dto: CreateChallengeDto) {
-    return this.challengesService.create(dto.hostUserId, dto.stakeAmount);
+  create(@CurrentUserId() userId: string, @Body() dto: CreateChallengeDto) {
+    return this.challengesService.create(userId, dto.stakeAmount);
   }
 
   @Get(':code')
@@ -20,7 +23,7 @@ export class ChallengesController {
   }
 
   @Post(':code/accept')
-  accept(@Param('code') code: string, @Body() dto: AcceptChallengeDto) {
-    return this.challengesService.accept(code, dto.userId);
+  accept(@Param('code') code: string, @CurrentUserId() userId: string) {
+    return this.challengesService.accept(code, userId);
   }
 }
