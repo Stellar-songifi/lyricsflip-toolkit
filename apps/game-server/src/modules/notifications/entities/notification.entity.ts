@@ -15,6 +15,10 @@ export class Notification {
   @Column()
   message: string;
 
+  /** Extra payload for the app, e.g. `{ url: 'lyricsflip://challenge/ABC123' }`. */
+  @Column({ type: 'jsonb', nullable: true })
+  data: Record<string, unknown> | null;
+
   @Column({ default: false })
   read: boolean;
 
