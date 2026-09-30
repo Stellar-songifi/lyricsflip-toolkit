@@ -66,7 +66,7 @@ export class StellarService {
     // TODO: build a Soroban `open_pot` invocation with @stellar/stellar-sdk
     // against STELLAR_ESCROW_CONTRACT_ID, then a `stake` invocation per
     // player, returned as unsigned XDR for the wallet to sign.
-    throw new Error('stellar settlement mode is not implemented yet — see onchain/README.md');
+    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
   }
 
   async resolve(sessionId: string, winnerAddress: string): Promise<string | null> {
@@ -76,7 +76,7 @@ export class StellarService {
       return null;
     }
 
-    throw new Error('stellar settlement mode is not implemented yet — see onchain/README.md');
+    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
   }
 
   async refund(sessionId: string): Promise<string | null> {
@@ -86,6 +86,6 @@ export class StellarService {
       return null;
     }
 
-    throw new Error('stellar settlement mode is not implemented yet — see onchain/README.md');
+    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
   }
 }
