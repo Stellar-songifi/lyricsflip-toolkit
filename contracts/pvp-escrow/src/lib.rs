@@ -14,7 +14,8 @@
 //! an arbitrary address.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, Env,
 };
 
 /// Ledgers per day at ~5 seconds per ledger.
@@ -87,6 +88,64 @@ pub enum Error {
     NothingToClaim = 16,
 }
 
+/// Published by `open_pot`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PotOpened {
+    #[topic]
+    pub session_id: BytesN<16>,
+    pub player_a: Address,
+    pub player_b: Address,
+    pub stake_amount: i128,
+    pub deadline_ledger: u32,
+}
+
+/// Published by `stake`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Staked {
+    #[topic]
+    pub session_id: BytesN<16>,
+    pub player: Address,
+}
+
+/// Published by `resolve`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Resolved {
+    #[topic]
+    pub session_id: BytesN<16>,
+    pub winner: Address,
+    pub payout: i128,
+}
+
+/// Published by `refund`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Refunded {
+    #[topic]
+    pub session_id: BytesN<16>,
+}
+
+/// Published by `claim_refund`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Claimed {
+    #[topic]
+    pub session_id: BytesN<16>,
+    pub player: Address,
+    pub amount: i128,
+}
+
+/// Published by `set_resolver` and `set_admin`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleChanged {
+    #[topic]
+    pub role: soroban_sdk::Symbol,
+    pub address: Address,
+}
+
 #[contract]
 pub struct PvpEscrow;
 
@@ -112,6 +171,11 @@ impl PvpEscrow {
     pub fn set_resolver(env: Env, resolver: Address) -> Result<(), Error> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Resolver, &resolver);
+        RoleChanged {
+            role: symbol_short!("resolver"),
+            address: resolver,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -120,6 +184,11 @@ impl PvpEscrow {
     pub fn set_admin(env: Env, admin: Address) -> Result<(), Error> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Admin, &admin);
+        RoleChanged {
+            role: symbol_short!("admin"),
+            address: admin,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -164,6 +233,14 @@ impl PvpEscrow {
             status: PotStatus::Open,
             deadline_ledger: env.ledger().sequence() + timeout_ledgers,
         };
+        PotOpened {
+            session_id: session_id.clone(),
+            player_a: pot.player_a.clone(),
+            player_b: pot.player_b.clone(),
+            stake_amount,
+            deadline_ledger: pot.deadline_ledger,
+        }
+        .publish(&env);
 
         Self::save_pot(&env, &session_id, &pot);
         Ok(())
@@ -202,6 +279,11 @@ impl PvpEscrow {
         if pot.player_a_staked && pot.player_b_staked {
             pot.status = PotStatus::Staked;
         }
+        Staked {
+            session_id: session_id.clone(),
+            player,
+        }
+        .publish(&env);
 
         Self::save_pot(&env, &session_id, &pot);
         Ok(())
@@ -229,6 +311,12 @@ impl PvpEscrow {
         token_client.transfer(&env.current_contract_address(), &winner, &pot_total);
 
         pot.status = PotStatus::Resolved;
+        Resolved {
+            session_id: session_id.clone(),
+            winner,
+            payout: pot_total,
+        }
+        .publish(&env);
         Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
@@ -256,6 +344,10 @@ impl PvpEscrow {
         }
 
         pot.status = PotStatus::Refunded;
+        Refunded {
+            session_id: session_id.clone(),
+        }
+        .publish(&env);
         Self::save_pot(&env, &session_id, &pot);
         Ok(())
     }
@@ -297,6 +389,12 @@ impl PvpEscrow {
         if !pot.player_a_staked && !pot.player_b_staked {
             pot.status = PotStatus::Refunded;
         }
+        Claimed {
+            session_id: session_id.clone(),
+            player,
+            amount: pot.stake_amount,
+        }
+        .publish(&env);
 
         Self::save_pot(&env, &session_id, &pot);
         Ok(pot.stake_amount)
