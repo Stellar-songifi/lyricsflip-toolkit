@@ -70,7 +70,7 @@ export class Sep10Service {
         config.webAuthDomain ?? config.homeDomain,
       );
       clientAccountID = read.clientAccountID;
-      hash = read.tx.hash().toString('hex');
+      hash = Buffer.from(read.tx.hash()).toString('hex');
       maxTime = Number(read.tx.timeBounds?.maxTime ?? 0);
       if (!WebAuth.verifyTxSignedBy(read.tx, address)) {
         throw new Error('not signed by the claimed account');
