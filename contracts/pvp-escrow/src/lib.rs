@@ -54,7 +54,7 @@ pub enum DataKey {
 pub enum Error {
     // 1 was `AlreadyInitialized`, from the removed `initialize` entry point.
     NotInitialized = 2,
-    NotAuthorized = 3,
+    // 3 was `NotAuthorized`; authorisation failures now come from `require_auth`.
     PotAlreadyExists = 4,
     PotNotFound = 5,
     PotNotOpen = 6,
@@ -85,19 +85,18 @@ impl PvpEscrow {
         env.storage().instance().set(&DataKey::Token, &token);
     }
 
-    pub fn set_resolver(env: Env, admin: Address, resolver: Address) -> Result<(), Error> {
-        admin.require_auth();
-
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-        if stored_admin != admin {
-            return Err(Error::NotAuthorized);
-        }
-
+    /// Rotates the resolver key. Admin only.
+    pub fn set_resolver(env: Env, resolver: Address) -> Result<(), Error> {
+        Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Resolver, &resolver);
+        Ok(())
+    }
+
+    /// Hands the admin role to a new address (for example a multisig).
+    /// Admin only.
+    pub fn set_admin(env: Env, admin: Address) -> Result<(), Error> {
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Admin, &admin);
         Ok(())
     }
 
@@ -249,6 +248,16 @@ impl PvpEscrow {
 }
 
 impl PvpEscrow {
+    fn require_admin(env: &Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        Ok(())
+    }
+
     /// Requires the stored resolver's authorisation. The resolver is never
     /// taken from arguments, so a caller can't name themselves as resolver.
     fn require_resolver(env: &Env) -> Result<(), Error> {
