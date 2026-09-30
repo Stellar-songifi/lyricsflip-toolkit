@@ -77,6 +77,8 @@ pub enum Error {
     SamePlayer = 12,
     InvalidTimeout = 13,
     DeadlinePassed = 14,
+    DeadlineNotReached = 15,
+    NothingToClaim = 16,
 }
 
 #[contract]
@@ -214,7 +216,10 @@ impl PvpEscrow {
         Self::require_resolver(&env)?;
 
         let mut pot = Self::load_pot(&env, &session_id)?;
-        if pot.status != PotStatus::Staked {
+        // The flags are checked as well as the status: after the deadline a
+        // player may have reclaimed their stake with `claim_refund`, which
+        // clears their flag while the status can still read `Staked`.
+        if pot.status != PotStatus::Staked || !pot.player_a_staked || !pot.player_b_staked {
             return Err(Error::PotNotStaked);
         }
         if winner != pot.player_a && winner != pot.player_b {
@@ -267,6 +272,59 @@ impl PvpEscrow {
             .persistent()
             .set(&DataKey::Pot(session_id), &pot);
         Ok(())
+    }
+
+    /// Lets a player reclaim their own stake once the pot's deadline has
+    /// passed without a `resolve` or `refund`. This is the players' escape
+    /// hatch if the game server disappears: funds can't be locked forever.
+    ///
+    /// Only `player`'s own stake moves, and only to `player`. Once either
+    /// player has claimed, the pot no longer holds both stakes, so `resolve`
+    /// is refused for good.
+    pub fn claim_refund(env: Env, session_id: BytesN<16>, player: Address) -> Result<i128, Error> {
+        player.require_auth();
+
+        let mut pot = Self::load_pot(&env, &session_id)?;
+        if pot.status != PotStatus::Open && pot.status != PotStatus::Staked {
+            return Err(Error::PotNotOpen);
+        }
+        if env.ledger().sequence() <= pot.deadline_ledger {
+            return Err(Error::DeadlineNotReached);
+        }
+
+        let is_a = player == pot.player_a;
+        let is_b = player == pot.player_b;
+        if !is_a && !is_b {
+            return Err(Error::NotAPlayerInPot);
+        }
+        if (is_a && !pot.player_a_staked) || (is_b && !pot.player_b_staked) {
+            return Err(Error::NothingToClaim);
+        }
+
+        let token_id: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        token::Client::new(&env, &token_id).transfer(
+            &env.current_contract_address(),
+            &player,
+            &pot.stake_amount,
+        );
+
+        if is_a {
+            pot.player_a_staked = false;
+        } else {
+            pot.player_b_staked = false;
+        }
+        if !pot.player_a_staked && !pot.player_b_staked {
+            pot.status = PotStatus::Refunded;
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Pot(session_id), &pot);
+        Ok(pot.stake_amount)
     }
 
     pub fn get_pot(env: Env, session_id: BytesN<16>) -> Result<Pot, Error> {
