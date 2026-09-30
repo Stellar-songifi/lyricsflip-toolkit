@@ -1,91 +1,92 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AppConfig } from '../../config/configuration';
+import { Stroops } from '../amount';
 
-export interface UnsignedStakeTransaction {
-  playerId: string;
-  /** Base64 XDR the player's wallet must sign and submit. */
-  transactionXdr: string;
+/** DI token for the active {@link EscrowGateway}. */
+export const ESCROW_GATEWAY = Symbol('ESCROW_GATEWAY');
+
+export type SettlementMode = 'mock' | 'stellar';
+
+/**
+ * What a submission is known to have done.
+ *
+ * - `confirmed`: included in a ledger and succeeded.
+ * - `pending`: sent, but the outcome is not known yet. Never treat this as
+ *   success or failure — reconcile it against the pot instead.
+ * - `failed`: definitely did not change anything on-chain.
+ */
+export type SubmitStatus = 'confirmed' | 'pending' | 'failed';
+
+export interface SubmitOutcome {
+  status: SubmitStatus;
+  txHash: string | null;
+  ledger?: number;
+  error?: string;
 }
 
-export interface StellarInfo {
-  settlementMode: 'mock' | 'stellar';
-  custodyMode: 'non-custodial' | 'custodial';
-  network: string;
-  escrowContractId: string | null;
-  tokenContractId: string | null;
+/** Mirrors the contract's `PotStatus`. */
+export type PotStatus = 'open' | 'staked' | 'resolved' | 'refunded';
+
+export interface PotState {
+  playerA: string;
+  playerB: string;
+  stakeAmount: Stroops;
+  playerAStaked: boolean;
+  playerBStaked: boolean;
+  status: PotStatus;
+  deadlineLedger: number;
+}
+
+export interface OpenPotParams {
+  potId: string;
+  playerA: string;
+  playerB: string;
+  stakeAmount: Stroops;
+  timeoutLedgers: number;
+}
+
+export interface OpenPotOutcome extends SubmitOutcome {
+  deadlineLedger?: number;
+}
+
+/** A stake transaction for a player's wallet to sign. */
+export interface UnsignedStake {
+  /** Base64 transaction envelope XDR. */
+  transactionXdr: string;
+  networkPassphrase: string;
 }
 
 /**
- * Talks to the `lyricsflip-escrow` Soroban contract. In `mock` mode (the
- * default) nothing touches the network — wager balances live entirely in
- * Postgres, via the `wagers` table — so gameplay can be built without
- * deploying contracts. In `stellar` mode this builds unsigned transactions
- * for non-custodial signing, or submits directly with the resolver key in
- * custodial mode.
+ * The on-chain side of settlement: one method per `pvp-escrow` call.
+ *
+ * `potId` is the wager id, a UUID, which maps onto the contract's 16-byte
+ * session key. Implementations must never throw for an outcome that is
+ * merely unknown; they return `pending` so the wager can be reconciled.
  */
-@Injectable()
-export class StellarService {
-  private readonly logger = new Logger(StellarService.name);
+export interface EscrowGateway {
+  readonly mode: SettlementMode;
 
-  constructor(private readonly configService: ConfigService<AppConfig, true>) {}
-
-  private get stellarConfig() {
-    return this.configService.get('stellar', { infer: true });
-  }
-
-  getInfo(): StellarInfo {
-    const { settlementMode, custodyMode, network, escrowContractId, tokenContractId } =
-      this.stellarConfig;
-    return {
-      settlementMode,
-      custodyMode,
-      network,
-      escrowContractId: escrowContractId || null,
-      tokenContractId: tokenContractId || null,
-    };
-  }
+  openPot(params: OpenPotParams): Promise<OpenPotOutcome>;
 
   /**
-   * Opens a pot for a session and returns one unsigned funding transaction
-   * per player (non-custodial mode). In mock mode this is a no-op — staking
-   * is recorded directly against the `wagers` row instead.
+   * Builds the stake transaction for `player`. Returns `null` when the
+   * gateway needs no signature from the player (mock or custodial mode).
    */
-  async openPot(
-    sessionId: string,
-    playerAAddress: string,
-    playerBAddress: string,
-    stakeAmountStroops: string,
-  ): Promise<UnsignedStakeTransaction[] | null> {
-    const { settlementMode } = this.stellarConfig;
-    if (settlementMode === 'mock') {
-      this.logger.debug(`[mock] open_pot session=${sessionId} stake=${stakeAmountStroops}`);
-      return null;
-    }
+  buildStake(potId: string, player: string, playerId: string): Promise<UnsignedStake | null>;
 
-    // TODO: build a Soroban `open_pot` invocation with @stellar/stellar-sdk
-    // against STELLAR_ESCROW_CONTRACT_ID, then a `stake` invocation per
-    // player, returned as unsigned XDR for the wallet to sign.
-    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
-  }
+  /**
+   * Submits `player`'s stake. `signedTransactionXdr` is the envelope the
+   * wallet signed; it is `null` when {@link buildStake} returned `null`.
+   */
+  submitStake(
+    potId: string,
+    player: string,
+    playerId: string,
+    signedTransactionXdr: string | null,
+  ): Promise<SubmitOutcome>;
 
-  async resolve(sessionId: string, winnerAddress: string): Promise<string | null> {
-    const { settlementMode } = this.stellarConfig;
-    if (settlementMode === 'mock') {
-      this.logger.debug(`[mock] resolve session=${sessionId} winner=${winnerAddress}`);
-      return null;
-    }
+  resolve(potId: string, winner: string): Promise<SubmitOutcome>;
 
-    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
-  }
+  refund(potId: string): Promise<SubmitOutcome>;
 
-  async refund(sessionId: string): Promise<string | null> {
-    const { settlementMode } = this.stellarConfig;
-    if (settlementMode === 'mock') {
-      this.logger.debug(`[mock] refund session=${sessionId}`);
-      return null;
-    }
-
-    throw new Error('stellar settlement mode is not implemented yet — see contracts/README.md');
-  }
+  /** Reads the pot straight from the source of truth; `null` if absent. */
+  getPot(potId: string): Promise<PotState | null>;
 }
