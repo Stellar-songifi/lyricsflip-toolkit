@@ -35,6 +35,11 @@ export interface AppConfig {
     tokenContractId: string;
     resolverSecret: string;
   };
+  sep10: {
+    /** Empty in development means "generate a throwaway key at boot". */
+    signingSecret: string;
+    homeDomain: string;
+  };
 }
 
 function required(key: string): string {
@@ -50,6 +55,9 @@ export default (): AppConfig => {
   const custodyMode = (process.env.STELLAR_CUSTODY_MODE ?? 'non-custodial') as CustodyMode;
   const network = process.env.STELLAR_NETWORK ?? 'testnet';
 
+  if (settlementMode !== 'mock' && settlementMode !== 'stellar') {
+    throw new Error(`STELLAR_SETTLEMENT_MODE must be "mock" or "stellar", got "${settlementMode}"`);
+  }
   if (custodyMode === 'custodial' && network === 'public') {
     throw new Error(
       'STELLAR_CUSTODY_MODE=custodial is refused when STELLAR_NETWORK=public. ' +
@@ -96,6 +104,15 @@ export default (): AppConfig => {
         settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
       tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
       resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+    },
+    sep10: {
+      // Must be stable across restarts and shared by every instance, or
+      // pending logins break. Only optional outside production.
+      signingSecret:
+        (process.env.NODE_ENV ?? 'development') === 'production'
+          ? required('SEP10_SIGNING_SECRET')
+          : (process.env.SEP10_SIGNING_SECRET ?? ''),
+      homeDomain: process.env.SEP10_HOME_DOMAIN ?? 'localhost',
     },
   };
 };
