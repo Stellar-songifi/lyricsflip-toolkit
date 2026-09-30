@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-  "contracts/lyricsflip",
-  "contracts/lyricsflip-nft",
-  "contracts/lyricsflip-escrow",
-]
+members = ["pvp-escrow"]
 
 [workspace.dependencies]
 soroban-sdk = "27.0.6"
