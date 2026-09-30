@@ -1,12 +1,10 @@
-import { IsString, IsUUID } from 'class-validator';
+import { IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class SubmitGuessDto {
   @IsUUID()
   sessionId: string;
 
-  @IsUUID()
-  userId: string;
-
   @IsString()
+  @MaxLength(200)
   guess: string;
 }
