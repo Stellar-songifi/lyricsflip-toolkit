@@ -18,6 +18,14 @@ export class UsersService {
     return user;
   }
 
+  async findByUsername(username: string): Promise<User> {
+    const user = await this.usersRepository.findOne({ where: { username } });
+    if (!user) {
+      throw new NotFoundException(`No player called ${username}`);
+    }
+    return user;
+  }
+
   async findOrCreateByWallet(walletAddress: string): Promise<User> {
     let user = await this.usersRepository.findOne({ where: { walletAddress } });
     if (!user) {
