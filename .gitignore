@@ -35,7 +35,7 @@ Thumbs.db
 coverage/
 
 # Rust / Soroban
-onchain/target/
+contracts/target/
 **/*.rs.bk
 Cargo.lock.bak
 
