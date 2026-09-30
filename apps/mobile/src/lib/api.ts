@@ -165,6 +165,7 @@ export function createApi(baseUrl: string, getToken: () => string | null, fetchI
         ),
     },
     wagers: {
+      list: () => request<Wager[]>('GET', '/wagers'),
       get: (id: string) => request<Wager>('GET', `/wagers/${id}`),
       stakeTransaction: (id: string) =>
         request<{ transaction: { transactionXdr: string; networkPassphrase: string } | null }>(
