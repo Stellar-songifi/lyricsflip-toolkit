@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LEVEL_THRESHOLDS, PlayerLevel, User } from './entities/user.entity';
@@ -24,6 +24,15 @@ export class UsersService {
       throw new NotFoundException(`No player called ${username}`);
     }
     return user;
+  }
+
+  async rename(id: string, username: string): Promise<User> {
+    const taken = await this.usersRepository.findOne({ where: { username } });
+    if (taken && taken.id !== id) {
+      throw new ConflictException('That username is taken');
+    }
+    await this.usersRepository.update({ id }, { username });
+    return this.findById(id);
   }
 
   async findOrCreateByWallet(walletAddress: string): Promise<User> {
