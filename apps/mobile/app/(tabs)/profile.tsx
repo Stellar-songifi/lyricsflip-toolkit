@@ -3,12 +3,15 @@ import { StyleSheet, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Body, Button, ErrorText, Screen, Title, styles as ui } from '../../src/components/ui';
 import { useSession } from '../../src/lib/session';
+import { getTestTokens } from '../../src/lib/test-tokens';
 import { colors, spacing } from '../../src/lib/theme';
 
 export default function Profile() {
   const { user, wallet, api, refreshUser, signOut } = useSession();
   const [username, setUsername] = useState(user?.username ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
     void refreshUser().catch(() => undefined);
@@ -17,6 +20,19 @@ export default function Profile() {
   if (!user) return null;
   const next = user.nextLevel;
   const progress = next ? Math.min(1, user.xp / next.minXp) : 1;
+
+  async function claimTokens() {
+    if (!wallet) return;
+    setClaiming(true);
+    setError(null);
+    try {
+      setTokens(`Received ${await getTestTokens(api, wallet)}`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setClaiming(false);
+    }
+  }
 
   async function save() {
     setError(null);
@@ -54,6 +70,8 @@ export default function Profile() {
           onPress={() => void Clipboard.setStringAsync(wallet.publicKey())}
         />
       ) : null}
+      <Button label="Get free test tokens" variant="secondary" onPress={claimTokens} busy={claiming} />
+      {tokens ? <Body muted>{tokens}</Body> : null}
       <Button label="Sign out" variant="secondary" onPress={() => void signOut()} />
     </Screen>
   );
