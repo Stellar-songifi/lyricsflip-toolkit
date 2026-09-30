@@ -1,7 +1,7 @@
 {
-  "name": "lyricsflip-backend",
+  "name": "@lyricsflip-toolkit/game-server",
   "version": "0.1.0",
-  "description": "LyricsFlip API — NestJS + TypeORM + Socket.IO",
+  "description": "LyricsFlip game server — NestJS + TypeORM + Socket.IO",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
