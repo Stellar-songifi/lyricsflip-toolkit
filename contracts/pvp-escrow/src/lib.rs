@@ -58,6 +58,17 @@ pub struct Pot {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Config {
+    /// May rotate the resolver and the admin. Ideally a multisig.
+    pub admin: Address,
+    /// The only address allowed to open, resolve or refund pots.
+    pub resolver: Address,
+    /// The stake token: a Soroban token or a classic asset's SAC.
+    pub token: Address,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
@@ -400,8 +411,23 @@ impl PvpEscrow {
         Ok(pot.stake_amount)
     }
 
+    /// Reads a pot. The game server uses this to reconcile its database
+    /// against the chain after an ambiguous submission.
     pub fn get_pot(env: Env, session_id: BytesN<16>) -> Result<Pot, Error> {
         Self::load_pot(&env, &session_id)
+    }
+
+    /// Reads the contract configuration, so an operator can check a
+    /// deployment against what the game server expects.
+    pub fn get_config(env: Env) -> Result<Config, Error> {
+        let storage = env.storage().instance();
+        Ok(Config {
+            admin: storage.get(&DataKey::Admin).ok_or(Error::NotInitialized)?,
+            resolver: storage
+                .get(&DataKey::Resolver)
+                .ok_or(Error::NotInitialized)?,
+            token: storage.get(&DataKey::Token).ok_or(Error::NotInitialized)?,
+        })
     }
 }
 
