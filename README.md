@@ -4,6 +4,8 @@
 
 # lyricsflip-toolkit
 
+[![integration](https://github.com/Stellar-songifi/lyricsflip-toolkit/actions/workflows/integration.yml/badge.svg)](https://github.com/Stellar-songifi/lyricsflip-toolkit/actions/workflows/integration.yml)
+
 **Settlement toolkit for head-to-head games on Stellar.**
 Your game server decides who won. A Soroban escrow contract holds both stakes and pays the winner,
 and it is built so that even a compromised server can't drain it.
