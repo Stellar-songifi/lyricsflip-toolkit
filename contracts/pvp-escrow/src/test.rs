@@ -720,3 +720,90 @@ fn resolve_publishes_the_winner_and_payout() {
     let last = events.events().last().expect("an event").clone();
     assert_eq!(last, expected.to_xdr(&s.env, &s.escrow.address));
 }
+
+/// The last event the escrow published, decoded, so a test can name the event
+/// type it expects without hand-rolling XDR.
+fn last_event(s: &Setup) -> soroban_sdk::xdr::ContractEvent {
+    use soroban_sdk::testutils::Events as _;
+    s.env
+        .events()
+        .all()
+        .events()
+        .last()
+        .expect("an event")
+        .clone()
+}
+
+#[test]
+fn stake_publishes_the_stake_amount() {
+    use soroban_sdk::Event as _;
+
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+
+    // Without `stake_amount` an indexer would have to read the Pot to know how
+    // much moved; the event must carry it.
+    let expected = Staked {
+        session_id: s.session_id.clone(),
+        player: s.player_a.clone(),
+        stake_amount: STAKE,
+    };
+    assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
+}
+
+#[test]
+fn refund_publishes_the_amount_returned_to_each_player() {
+    use soroban_sdk::Event as _;
+
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.refund(&s.session_id);
+
+    let expected = Refunded {
+        session_id: s.session_id.clone(),
+        player_a_amount: STAKE,
+        player_b_amount: STAKE,
+    };
+    assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
+}
+
+#[test]
+fn refund_event_reports_zero_for_a_player_who_never_staked() {
+    use soroban_sdk::Event as _;
+
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+    s.escrow.refund(&s.session_id);
+
+    // Player B never staked, so their refund is 0 — visible in the event, not
+    // only inferable from the balance delta.
+    let expected = Refunded {
+        session_id: s.session_id.clone(),
+        player_a_amount: STAKE,
+        player_b_amount: 0,
+    };
+    assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
+}
+
+#[test]
+fn refund_event_reports_zero_for_a_stake_already_reclaimed() {
+    use soroban_sdk::Event as _;
+
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.pass_deadline();
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+
+    s.escrow.refund(&s.session_id);
+
+    // Player A already took their stake back, so the resolver refund returns
+    // nothing to them and the full stake only to B.
+    let expected = Refunded {
+        session_id: s.session_id.clone(),
+        player_a_amount: 0,
+        player_b_amount: STAKE,
+    };
+    assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
+}
