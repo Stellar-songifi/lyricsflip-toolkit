@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomInt } from 'crypto';
@@ -13,6 +18,26 @@ import { deepLink } from '../notifications/deep-links';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — easy to read aloud
 const CODE_LENGTH = 6;
 const CHALLENGE_TTL_MS = 15 * 60 * 1000;
+/** PostgreSQL SQLSTATE for a unique-constraint violation. */
+const UNIQUE_VIOLATION = '23505';
+/** One insert, plus a single retry on collision. */
+const CODE_INSERT_ATTEMPTS = 2;
+
+/** The columns `create` decides; `code` is generated per attempt instead. */
+type NewChallenge = Pick<
+  Challenge,
+  'hostUserId' | 'stakeAmount' | 'invitedUserId' | 'status' | 'expiresAt'
+>;
+
+/**
+ * PostgreSQL reports a unique-constraint violation as SQLSTATE 23505. TypeORM
+ * wraps the driver error in a `QueryFailedError`, and which level carries the
+ * code has moved between versions, so check both.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const error = err as { code?: string; driverError?: { code?: string } } | null;
+  return (error?.code ?? error?.driverError?.code) === UNIQUE_VIOLATION;
+}
 
 export interface ChallengeSummary {
   code: string;
@@ -50,18 +75,14 @@ export class ChallengesService {
     if (stakeAmount && !(await this.walletLinks.getAddress(hostUserId))) {
       throw new BadRequestException('Link a wallet before creating a staked challenge');
     }
-    const code = await this.generateUniqueCode();
 
-    const challenge = await this.challengesRepository.save(
-      this.challengesRepository.create({
-        code,
-        hostUserId,
-        stakeAmount: stakeAmount ?? null,
-        invitedUserId: invited?.id ?? null,
-        status: ChallengeStatus.PENDING,
-        expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
-      }),
-    );
+    const challenge = await this.insertWithUniqueCode({
+      hostUserId,
+      stakeAmount: stakeAmount ?? null,
+      invitedUserId: invited?.id ?? null,
+      status: ChallengeStatus.PENDING,
+      expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS),
+    });
 
     if (invited) {
       const host = await this.users.findById(hostUserId);
@@ -69,8 +90,8 @@ export class ChallengesService {
       await this.notifications.push(
         invited.id,
         'challenge.invite',
-        `${host.username} challenged you${stake}. Code ${code}.`,
-        { url: deepLink.challenge(code), code },
+        `${host.username} challenged you${stake}. Code ${challenge.code}.`,
+        { url: deepLink.challenge(challenge.code), code: challenge.code },
       );
     }
 
@@ -145,15 +166,39 @@ export class ChallengesService {
     return { gameSessionId: session.id, wagerId };
   }
 
-  private async generateUniqueCode(): Promise<string> {
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const code = Array.from({ length: CODE_LENGTH }, () =>
-        CODE_ALPHABET[randomInt(CODE_ALPHABET.length)],
-      ).join('');
-      const existing = await this.challengesRepository.findOne({ where: { code } });
-      if (!existing) return code;
+  /**
+   * Inserts a row whose `code` is unique, letting the database decide.
+   *
+   * A "read to check the code is free, then insert" loop is not atomic: two
+   * requests can both see the same code as free and both try to insert it, so
+   * the check proves nothing about the insert. `UQ_challenges_code` is what
+   * actually serialises them, so we generate a code, insert, and treat a
+   * unique violation as "someone beat us to it, try once more".
+   *
+   * Anything that is not a unique violation is a real failure and propagates
+   * untouched; two collisions in a row (vanishingly unlikely at 6 characters
+   * over a 32-symbol alphabet) surface as a 500 rather than a plain `Error`.
+   */
+  private async insertWithUniqueCode(input: NewChallenge): Promise<Challenge> {
+    for (let attempt = 0; attempt < CODE_INSERT_ATTEMPTS; attempt++) {
+      const challenge = this.challengesRepository.create({
+        ...input,
+        code: this.randomCode(),
+      });
+      try {
+        return await this.challengesRepository.save(challenge);
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+      }
     }
-    throw new Error('Could not generate a unique challenge code');
+    throw new InternalServerErrorException('Could not generate a unique challenge code');
+  }
+
+  private randomCode(): string {
+    return Array.from(
+      { length: CODE_LENGTH },
+      () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)],
+    ).join('');
   }
 
   private async loadByCode(code: string): Promise<Challenge> {
