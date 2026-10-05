@@ -5,7 +5,7 @@ export interface AppConfig {
   port: number;
   nodeEnv: string;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
-  corsOrigin: string;
+  corsOrigin: string | null;
   jwt: {
     secret: string;
     expiresIn: string;
@@ -80,12 +80,19 @@ export default (): AppConfig => {
     );
   }
 
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const corsOrigin = process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? null;
+
+  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
+    throw new Error('CORS_ORIGIN must be explicitly set to a specific origin in production mode');
+  }
+
   const hasReplica = Boolean(process.env.DB_REPLICA_HOST);
 
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
-    nodeEnv: process.env.NODE_ENV ?? 'development',
-    corsOrigin: process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    nodeEnv,
+    corsOrigin,
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
