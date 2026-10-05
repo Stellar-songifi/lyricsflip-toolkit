@@ -1,6 +1,10 @@
 [package]
 name = "pvp-escrow"
-version = "0.1.0"
+# 0.1.1: additive event schema change — `Staked` gained `stake_amount` and
+# `Refunded` gained `player_a_amount` / `player_b_amount`. Storage and entry
+# points are unchanged, so this is not a breaking upgrade for callers; only
+# indexers gain fields. See CHANGELOG.md.
+version = "0.1.1"
 edition = "2021"
 publish = false
 license = "MIT"
