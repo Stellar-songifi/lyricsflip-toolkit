@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Repository } from 'typeorm';
@@ -6,6 +7,7 @@ import { GameSession, GameSessionStatus, GameMode } from './entities/game-sessio
 import { LyricsService } from '../lyrics/lyrics.service';
 import { UsersService } from '../users/users.service';
 import { GuessOutcome, scoreGuess } from './scoring';
+import type { AppConfig } from '../../config/configuration';
 
 export interface PublicLyric {
   id: string;
@@ -20,6 +22,8 @@ export interface GuessResult {
   streak: number;
   nextLyric: PublicLyric | null;
   sessionStatus: GameSessionStatus;
+  /** Rounds this session runs for; `currentRound` reaches it on the last guess. */
+  totalRounds: number;
 }
 
 /** Emitted once, by the server, when a session's last round is scored. */
@@ -30,7 +34,16 @@ export interface SessionFinishedEvent {
   scores: Record<string, number>;
 }
 
-const ROUNDS_PER_SESSION = 10;
+/** Options for {@link GameService.createSession}. */
+export interface CreateSessionOptions {
+  /** Stay `waiting` until {@link GameService.activate}, for a staked match. */
+  waitForStakes?: boolean;
+  /**
+   * Rounds this session runs for, overriding `ROUNDS_PER_SESSION`. Lets a game
+   * mode pick its own length (a coin flip wants 1, trivia might want 20).
+   */
+  rounds?: number;
+}
 
 @Injectable()
 export class GameService {
@@ -45,18 +58,32 @@ export class GameService {
     private readonly lyricsService: LyricsService,
     private readonly usersService: UsersService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService<AppConfig, true>,
   ) {}
 
   /**
    * Starts a session. With `waitForStakes`, it stays `waiting` until
    * {@link activate} is called, so a staked match can't be played before
    * both stakes are confirmed.
+   *
+   * The session's length comes from `ROUNDS_PER_SESSION` unless `options.rounds`
+   * overrides it. It is stored on the session, so changing the environment
+   * variable never moves the finishing line of a session already in progress.
    */
   async createSession(
     hostUserId: string,
     mode: GameMode,
-    options: { waitForStakes?: boolean } = {},
+    options: CreateSessionOptions = {},
   ): Promise<GameSession> {
+    if (
+      options.rounds !== undefined &&
+      (!Number.isInteger(options.rounds) || options.rounds < 1)
+    ) {
+      throw new BadRequestException('rounds must be a positive integer');
+    }
+    const totalRounds =
+      options.rounds ?? this.configService.get('roundsPerSession', { infer: true });
+
     const lyric = await this.lyricsService.getRandom();
 
     const session = this.sessionsRepository.create({
@@ -65,6 +92,7 @@ export class GameService {
       playerIds: [hostUserId],
       currentLyricId: lyric.id,
       currentRound: 1,
+      totalRounds,
       scores: { [hostUserId]: 0 },
     });
     const saved = await this.sessionsRepository.save(session);
@@ -158,7 +186,7 @@ export class GameService {
     await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
 
     let nextLyric: PublicLyric | null = null;
-    if (session.currentRound >= ROUNDS_PER_SESSION) {
+    if (session.currentRound >= session.totalRounds) {
       session.status = GameSessionStatus.FINISHED;
       session.currentLyricId = null;
       for (const playerId of session.playerIds) this.streaks.delete(`${sessionId}:${playerId}`);
@@ -199,6 +227,7 @@ export class GameService {
       streak: this.streaks.get(streakKey) ?? 0,
       nextLyric,
       sessionStatus: session.status,
+      totalRounds: session.totalRounds,
     };
   }
 }

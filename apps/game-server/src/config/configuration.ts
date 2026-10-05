@@ -4,6 +4,11 @@ export type CustodyMode = 'non-custodial' | 'custodial';
 export interface AppConfig {
   port: number;
   nodeEnv: string;
+  /**
+   * Rounds in a session, unless the creator overrides it per session.
+   * `ROUNDS_PER_SESSION`, default 10.
+   */
+  roundsPerSession: number;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string;
   jwt: {
@@ -82,9 +87,16 @@ export default (): AppConfig => {
 
   const hasReplica = Boolean(process.env.DB_REPLICA_HOST);
 
+  const rawRounds = process.env.ROUNDS_PER_SESSION ?? '10';
+  const roundsPerSession = Number(rawRounds);
+  if (!Number.isInteger(roundsPerSession) || roundsPerSession < 1) {
+    throw new Error(`ROUNDS_PER_SESSION must be a positive integer, got "${rawRounds}"`);
+  }
+
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv: process.env.NODE_ENV ?? 'development',
+    roundsPerSession,
     corsOrigin: process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
     jwt: {
       secret: required('JWT_SECRET'),

@@ -26,6 +26,10 @@ interface SubmitGuessPayload {
  * Real-time play. Every connection must present the game's JWT (as
  * `auth.token` in the Socket.IO handshake, or a bearer header); the player
  * is always the token's subject, never a field in a message.
+ *
+ * The session payloads mirror the HTTP ones and include `totalRounds`, the
+ * round the session finishes at. `guessResult` carries it too, and
+ * `sessionFinished` repeats it so a client can show the final "round N of N".
  */
 @WebSocketGateway({
   namespace: '/game',
@@ -75,7 +79,10 @@ export class GameGateway implements OnGatewayConnection {
       this.server.to(payload.sessionId).emit('lyric', result.nextLyric);
     }
     if (result.sessionStatus === 'finished') {
-      this.server.to(payload.sessionId).emit('sessionFinished', { sessionId: payload.sessionId });
+      this.server.to(payload.sessionId).emit('sessionFinished', {
+        sessionId: payload.sessionId,
+        totalRounds: result.totalRounds,
+      });
     }
     return result;
   }

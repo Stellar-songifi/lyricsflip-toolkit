@@ -45,6 +45,15 @@ export class GameSession {
   @Column({ default: 0 })
   currentRound: number;
 
+  /**
+   * Rounds this session runs for before it finishes. Fixed at creation: the
+   * configured `ROUNDS_PER_SESSION`, or a caller's per-session override. Stored
+   * rather than read from config so a mid-flight config change can't move the
+   * finishing line of a session already in progress.
+   */
+  @Column({ default: 10 })
+  totalRounds: number;
+
   @Column({ type: 'jsonb', default: () => "'{}'" })
   scores: Record<string, number>;
 

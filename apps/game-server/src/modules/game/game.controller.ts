@@ -1,8 +1,9 @@
 import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { GameService } from './game.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { SubmitGuessDto } from './dto/submit-guess.dto';
+import { GameSessionResponseDto } from './dto/game-session.dto';
 import { GameMode } from './entities/game-session.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUserId } from '../auth/decorators/current-user.decorator';
@@ -14,8 +15,12 @@ import { CurrentUserId } from '../auth/decorators/current-user.decorator';
 export class GameController {
   constructor(private readonly gameService: GameService) {}
 
-  /** Solo and room sessions. Head-to-head matches start from a challenge. */
+  /**
+   * Solo and room sessions. Head-to-head matches start from a challenge. The
+   * session's length is `ROUNDS_PER_SESSION` unless a game mode overrides it.
+   */
   @Post('sessions')
+  @ApiOkResponse({ type: GameSessionResponseDto })
   createSession(@CurrentUserId() userId: string, @Body() dto: CreateSessionDto) {
     if (dto.mode === GameMode.HEAD_TO_HEAD) {
       throw new BadRequestException('Start a head-to-head match with POST /challenges');
@@ -24,11 +29,13 @@ export class GameController {
   }
 
   @Post('sessions/:id/join')
+  @ApiOkResponse({ type: GameSessionResponseDto })
   joinSession(@Param('id', ParseUUIDPipe) id: string, @CurrentUserId() userId: string) {
     return this.gameService.joinSession(id, userId);
   }
 
   @Get('sessions/:id')
+  @ApiOkResponse({ type: GameSessionResponseDto })
   getSession(@Param('id', ParseUUIDPipe) id: string) {
     return this.gameService.getSession(id);
   }
