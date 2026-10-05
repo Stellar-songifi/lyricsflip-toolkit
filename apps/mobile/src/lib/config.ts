@@ -2,6 +2,10 @@ import { Networks } from '@stellar/stellar-sdk';
 
 export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+export const API_TIMEOUT_MS = process.env.EXPO_PUBLIC_API_TIMEOUT_MS
+  ? Number(process.env.EXPO_PUBLIC_API_TIMEOUT_MS)
+  : 30_000;
+
 export const NETWORK_PASSPHRASE =
   process.env.EXPO_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET;
 
