@@ -5,6 +5,7 @@ import { MockEscrowGateway } from './escrow/mock-escrow.gateway';
 import { MockPot } from './escrow/mock-pot.entity';
 import { StellarEscrowGateway } from './escrow/stellar-escrow.gateway';
 import { PvpPlayerGuard } from './http/player.guard';
+import { ResolverController } from './http/resolver.controller';
 import { WagerController } from './http/wager.controller';
 import { WalletController } from './http/wallet.controller';
 import { PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions, validateOptions } from './options';
@@ -62,7 +63,9 @@ export class PvpSettlementModule {
     imports: NonNullable<ModuleMetadata['imports']>,
     withControllers: boolean,
   ): DynamicModule {
-    const controllers: Type[] = withControllers ? [WagerController, WalletController] : [];
+    const controllers: Type[] = withControllers
+      ? [WagerController, WalletController, ResolverController]
+      : [];
     return {
       module: PvpSettlementModule,
       // Global, so the host's own modules (auth, game logic) can inject
