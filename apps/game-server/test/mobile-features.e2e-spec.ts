@@ -1,6 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { DataSource } from 'typeorm';
 import { PushTransport, RecordingPushTransport } from '../src/modules/push/expo-push.client';
+import { Challenge, ChallengeStatus } from '../src/modules/challenges/entities/challenge.entity';
 import { LYRICS, auth, bootApp, eventually, resetDatabase, signIn } from './e2e-app';
 
 describe('features the mobile app relies on (e2e)', () => {
@@ -135,6 +137,44 @@ describe('features the mobile app relies on (e2e)', () => {
       await request(server).patch('/users/me').set(...auth(a)).send({ username: name }).expect(200);
       await request(server).patch('/users/me').set(...auth(b)).send({ username: name }).expect(409);
       await request(server).patch('/users/me').set(...auth(b)).send({ username: 'Bad Name!' }).expect(400);
+    });
+  });
+
+  describe('challenge codes', () => {
+    it('gives every code out exactly once when creations land at the same time', async () => {
+      const players = await Promise.all(Array.from({ length: 8 }, () => signIn(app)));
+
+      const responses = await Promise.all(
+        players.map((player) => request(server).post('/challenges').set(...auth(player)).send({})),
+      );
+
+      for (const res of responses) expect(res.status).toBe(201);
+      const codes = responses.map((res) => res.body.code as string);
+      expect(new Set(codes).size).toBe(codes.length);
+      for (const code of codes) expect(code).toMatch(/^[A-Z2-9]{6}$/);
+    });
+
+    it('has a live unique constraint on code, which is what the insert retry relies on', async () => {
+      const host = await signIn(app);
+      const created = await request(server)
+        .post('/challenges')
+        .set(...auth(host))
+        .send({})
+        .expect(201);
+
+      const repo = app.get(DataSource).getRepository(Challenge);
+      const duplicate = repo.create({
+        code: created.body.code,
+        hostUserId: host.id,
+        status: ChallengeStatus.PENDING,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+
+      // A second row with an existing code must be refused by the migrated
+      // schema. If this ever succeeds, the constraint was dropped and the
+      // collision the service retries on has turned into a silent duplicate.
+      const error = await repo.save(duplicate).catch((err: unknown) => err);
+      expect((error as { driverError?: { code?: string } }).driverError?.code).toBe('23505');
     });
   });
 
