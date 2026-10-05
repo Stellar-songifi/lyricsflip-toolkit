@@ -47,4 +47,28 @@ describe('validateOptions', () => {
     expect(() => validateOptions(options({ potTimeoutLedgers: 59 }))).toThrow(/potTimeoutLedgers/);
     expect(() => validateOptions(options({ potTimeoutLedgers: 518_401 }))).toThrow(/potTimeoutLedgers/);
   });
+
+  describe('stellar.httpTimeoutMs', () => {
+    it('accepts a positive timeout, a zero timeout, and an unset timeout', () => {
+      for (const httpTimeoutMs of [1_000, 0, undefined]) {
+        expect(() =>
+          validateOptions(options({ mode: 'stellar', stellar: { ...stellar, httpTimeoutMs } })),
+        ).not.toThrow();
+      }
+    });
+
+    it('refuses a negative timeout, which would cancel every request before it was sent', () => {
+      expect(() =>
+        validateOptions(options({ mode: 'stellar', stellar: { ...stellar, httpTimeoutMs: -1 } })),
+      ).toThrow(/stellar\.httpTimeoutMs must be a non-negative number/);
+    });
+
+    it('refuses a timeout that is not a number', () => {
+      expect(() =>
+        validateOptions(
+          options({ mode: 'stellar', stellar: { ...stellar, httpTimeoutMs: Number.NaN } }),
+        ),
+      ).toThrow(/stellar\.httpTimeoutMs must be a non-negative number/);
+    });
+  });
 });

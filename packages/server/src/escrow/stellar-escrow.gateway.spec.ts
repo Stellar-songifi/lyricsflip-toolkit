@@ -145,3 +145,79 @@ describe('StellarEscrowGateway resolver key', () => {
     });
   });
 });
+
+describe('StellarEscrowGateway RPC HTTP timeout (Issue #8)', () => {
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  const key = Keypair.random();
+
+  it('defaults the SDK to a 15 second HTTP timeout', () => {
+    const gateway = new StellarEscrowGateway(makeOptions({ resolverSecret: key.secret() }));
+
+    expect(gateway.client.rpc.httpTimeoutMs).toBe(15_000);
+    expect(gateway.client.rpc.server.httpClient.defaults.timeout).toBe(15_000);
+  });
+
+  it('passes a configured httpTimeoutMs down to the SDK', () => {
+    const gateway = new StellarEscrowGateway(
+      makeOptions({ resolverSecret: key.secret(), httpTimeoutMs: 2_500 }),
+    );
+
+    expect(gateway.client.rpc.httpTimeoutMs).toBe(2_500);
+    expect(gateway.client.rpc.server.httpClient.defaults.timeout).toBe(2_500);
+  });
+
+  it('reports an openPot that timed out as pending, so the wager stays reconcilable', async () => {
+    const gateway = new StellarEscrowGateway(
+      makeOptions({ resolverSecret: key.secret(), httpTimeoutMs: 1_000 }),
+    );
+    jest.spyOn(gateway.client, 'getPot').mockResolvedValue(null);
+    jest
+      .spyOn(gateway.client, 'openPot')
+      .mockResolvedValue({ status: 'pending', hash: 'hash', error: 'timeout of 1000 ms exceeded' });
+
+    // `pending` is what keeps the wager out of a terminal state: it is not
+    // confirmed, but nothing proves the network refused it either, so the
+    // background reconciler has to settle it. `failed` would strand it.
+    await expect(gateway.openPot(OPEN_POT)).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('does not report a timed-out resolver call as a failed submission', async () => {
+    const gateway = new StellarEscrowGateway(
+      makeOptions({ resolverSecret: key.secret(), httpTimeoutMs: 1_000 }),
+    );
+
+    // `submit` classifies a thrown sendTransaction as `pending`; the gateway
+    // must preserve that rather than downgrading it to `failed`.
+    const submission = { status: 'pending' as const, hash: 'hash', error: 'timeout' };
+    jest.spyOn(gateway.client, 'getPot').mockResolvedValue(null);
+    jest.spyOn(gateway.client, 'openPot').mockResolvedValue(submission);
+
+    const outcome = await gateway.openPot(OPEN_POT);
+
+    expect(outcome.status).not.toBe('failed');
+    expect(outcome.status).toBe('pending');
+    expect(outcome.txHash).toBe('hash');
+  });
+
+  it('still reports a genuine pre-submission failure as failed', async () => {
+    const gateway = new StellarEscrowGateway(
+      makeOptions({ resolverSecret: key.secret(), httpTimeoutMs: 1_000 }),
+    );
+
+    // A build/simulation timeout happens before anything is submitted, so
+    // `failed` is correct here and the wager may be failed outright.
+    jest.spyOn(gateway.client, 'getPot').mockResolvedValue(null);
+    jest.spyOn(gateway.client, 'openPot').mockRejectedValue(new Error('timeout of 1000 ms exceeded'));
+
+    await expect(gateway.openPot(OPEN_POT)).resolves.toMatchObject({
+      status: 'failed',
+      error: 'timeout of 1000 ms exceeded',
+    });
+  });
+});

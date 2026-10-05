@@ -56,6 +56,9 @@ export class StellarEscrowGateway implements EscrowGateway {
       rpcUrl: this.config.rpcUrl,
       networkPassphrase: this.config.networkPassphrase,
       pollAttempts: this.config.confirmTimeoutSeconds ?? DEFAULTS.confirmTimeoutSeconds,
+      // Bounds every RPC request, so a slow node fails a settlement call rather
+      // than holding the request handler open forever.
+      httpTimeoutMs: this.config.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs,
     });
     this.client = new PvpEscrowClient(rpc, this.config.escrowContractId);
   }

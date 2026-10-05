@@ -17,6 +17,38 @@ helpers that keep stakes as stroop strings and never floats. It runs in Node (22
 | `potIdToScVal` | Encodes a UUID as the contract's 16-byte pot key. |
 | `PvpEscrowError` | The contract's error codes, for use with `isContractError(err, code)`. |
 
+## `SorobanRpc` options
+
+| Option | Default | What it does |
+|---|---|---|
+| `rpcUrl` | — | Soroban RPC endpoint. An `http://` URL also sets `allowHttp`. |
+| `networkPassphrase` | — | Network the transactions are built for. |
+| `maxFee` | `10_000_000n` | Fee ceiling per operation, in stroops. |
+| `timeoutSeconds` | `60` | Seconds a built transaction stays valid — the ledger validity window. |
+| **`httpTimeoutMs`** | **`15_000`** | **Per-request HTTP timeout, in milliseconds. `0` disables it.** |
+| `pollAttempts` | `30` | Polls (about one per second) before a submission is called `pending`. |
+| `tryAgainAttempts` | `5` | Resubmissions when the network queue is full. |
+
+`httpTimeoutMs` bounds the HTTP request itself, not the transaction. Without it a
+slow or unresponsive RPC node never answers, so `buildInvocation`, `read`,
+`sendTransaction` and `getTransaction` all hang indefinitely — in the settlement
+path that holds the request handler open and the wager never reaches the
+reconciler. When it fires, the in-flight fetch is cancelled through
+`AbortController`, so the socket is released rather than abandoned.
+
+A timed-out `sendTransaction` is reported as `pending`, never `failed`: the
+request may have reached the network before the local timeout fired, so the
+outcome is unknown and has to be reconciled.
+
+```ts
+const rpc = new SorobanRpc({
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  httpTimeoutMs: 1_000, // give up on a silent node after a second
+});
+```
+
+
 ## Example: a player reclaims their stake after a timeout
 
 If the game server disappears, each player can take their own stake back once the pot's deadline

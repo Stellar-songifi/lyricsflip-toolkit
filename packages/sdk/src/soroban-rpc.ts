@@ -36,6 +36,16 @@ export interface SorobanRpcOptions {
   maxFee?: bigint;
   /** Seconds a built transaction stays valid. Default 60. */
   timeoutSeconds?: number;
+  /**
+   * Per-request HTTP timeout, in milliseconds. Default 15,000. `0` disables it.
+   *
+   * Not to be confused with `timeoutSeconds`, which is the ledger validity
+   * window of a built transaction. This one bounds the HTTP request itself:
+   * without it a slow or unresponsive RPC node never answers and every call
+   * (`buildInvocation`, `read`, `sendTransaction`, `getTransaction`) hangs
+   * indefinitely, holding the settlement request handler open.
+   */
+  httpTimeoutMs?: number;
   /** Poll attempts (about one per second) before calling a submission pending. Default 30. */
   pollAttempts?: number;
   /** Resubmissions when the network queue is full. Default 5. */
@@ -43,6 +53,7 @@ export interface SorobanRpcOptions {
 }
 
 const DEFAULT_MAX_FEE = 10_000_000n;
+export const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 
 /**
  * A small wrapper around Soroban JSON-RPC that keeps fee policy, retries and
@@ -57,6 +68,8 @@ const DEFAULT_MAX_FEE = 10_000_000n;
 export class SorobanRpc {
   readonly server: rpc.Server;
   readonly networkPassphrase: string;
+  /** Per-request HTTP timeout applied to every RPC call, in milliseconds. */
+  readonly httpTimeoutMs: number;
   private readonly maxFee: bigint;
   private readonly timeoutSeconds: number;
   private readonly pollAttempts: number;
@@ -64,6 +77,16 @@ export class SorobanRpc {
 
   constructor(options: SorobanRpcOptions) {
     this.server = new rpc.Server(options.rpcUrl, { allowHttp: options.rpcUrl.startsWith('http://') });
+    this.httpTimeoutMs = options.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+    // `rpc.Server`'s own `timeout` option is declared but never forwarded to its
+    // HTTP client, so passing it there is a no-op and a slow node hangs forever
+    // (verified against @stellar/stellar-sdk 17.2.0). `httpClient.defaults` is
+    // the extension point the SDK documents for per-server HTTP config, and its
+    // `timeout` cancels the in-flight fetch through `AbortSignal.timeout` /
+    // `AbortController` — so the socket is released instead of merely abandoned.
+    // Every call, including `sendTransaction` and the `pollTransaction` loop,
+    // goes through this same client.
+    this.server.httpClient.defaults.timeout = this.httpTimeoutMs;
     this.networkPassphrase = options.networkPassphrase;
     this.maxFee = options.maxFee ?? DEFAULT_MAX_FEE;
     this.timeoutSeconds = options.timeoutSeconds ?? 60;
