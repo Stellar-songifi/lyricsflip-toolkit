@@ -40,6 +40,8 @@ export interface AppConfig {
     escrowContractId: string;
     tokenContractId: string;
     resolverSecret: string;
+    /** Per-request HTTP timeout for RPC calls, in ms. `0` disables it. */
+    httpTimeoutMs: number;
   };
   faucet: {
     /** Secret of the account that holds the test stake token. Test networks only. */
@@ -100,13 +102,22 @@ export default (): AppConfig => {
     throw new Error(`ROUNDS_PER_SESSION must be a positive integer, got "${rawRounds}"`);
   }
 
+  const rawHttpTimeoutMs = process.env.STELLAR_RPC_HTTP_TIMEOUT_MS ?? '15000';
+  const httpTimeoutMs = Number(rawHttpTimeoutMs);
+  // A hung RPC node must not hold the request handler open, so the timeout has
+  // to be a real, non-negative number of milliseconds. `0` opts out.
+  if (!Number.isFinite(httpTimeoutMs) || httpTimeoutMs < 0) {
+    throw new Error(
+      `STELLAR_RPC_HTTP_TIMEOUT_MS must be a non-negative number of milliseconds ` +
+        `(0 disables the timeout), got "${rawHttpTimeoutMs}"`,
+    );
+  }
+
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv: process.env.NODE_ENV ?? 'development',
     roundsPerSession,
     corsOrigin: process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
-    nodeEnv,
-    corsOrigin,
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
@@ -140,6 +151,7 @@ export default (): AppConfig => {
         settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
       tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
       resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+      httpTimeoutMs,
     },
     faucet: {
       secret: network === 'public' ? '' : (process.env.FAUCET_SECRET ?? ''),

@@ -44,6 +44,14 @@ export interface StellarSettlementOptions {
   stakeTxTimeoutSeconds?: number;
   /** How long to poll for a submitted transaction before calling it `pending`. Default 30. */
   confirmTimeoutSeconds?: number;
+  /**
+   * Per-request HTTP timeout for RPC calls, in milliseconds: the bound on a
+   * slow or unresponsive RPC node. Default 15,000; `0` disables it.
+   *
+   * Without it a hung node never answers, so `openPot`/`resolve` block the
+   * request handler indefinitely and the wager never returns to the reconciler.
+   */
+  httpTimeoutMs?: number;
 }
 
 export interface Sep10Options {
@@ -107,6 +115,7 @@ export const DEFAULTS = {
   challengeTtlSeconds: 300,
   stakeTxTimeoutSeconds: 300,
   confirmTimeoutSeconds: 30,
+  httpTimeoutMs: 15_000,
 } as const;
 
 /**
@@ -145,5 +154,16 @@ export function validateOptions(options: PvpSettlementOptions): void {
   const timeout = options.potTimeoutLedgers ?? DEFAULTS.potTimeoutLedgers;
   if (timeout < 60 || timeout > 518_400) {
     throw new Error('potTimeoutLedgers must be between 60 and 518400, the contract limits');
+  }
+  if (options.stellar) {
+    const httpTimeoutMs = options.stellar.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs;
+    // A negative timeout is meaningless: it would cancel every request before
+    // it was sent. `0` is the documented way to opt out, so it is allowed.
+    if (!Number.isFinite(httpTimeoutMs) || httpTimeoutMs < 0) {
+      throw new Error(
+        `stellar.httpTimeoutMs must be a non-negative number of milliseconds (0 disables the ` +
+          `timeout), got ${String(options.stellar.httpTimeoutMs)}`,
+      );
+    }
   }
 }

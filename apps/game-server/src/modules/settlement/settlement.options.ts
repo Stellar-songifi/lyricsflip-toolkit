@@ -44,6 +44,7 @@ export function settlementOptions(
             tokenContractId: stellar.tokenContractId,
             resolverSecret: stellar.resolverSecret,
             custodyMode: stellar.custodyMode,
+            httpTimeoutMs: stellar.httpTimeoutMs,
           }
         : undefined,
     sep10: {
