@@ -89,4 +89,12 @@ export interface EscrowGateway {
 
   /** Reads the pot straight from the source of truth; `null` if absent. */
   getPot(potId: string): Promise<PotState | null>;
+
+  /**
+   * The resolver public key the gateway signs with right now, when it has one.
+   * Present on `stellar` gateways only; used by the internal
+   * `GET /wager/resolver-address` route so an operator can confirm the live
+   * server matches the on-chain resolver.
+   */
+  currentResolverAddress?(): Promise<string>;
 }

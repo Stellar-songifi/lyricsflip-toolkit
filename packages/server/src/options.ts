@@ -14,8 +14,25 @@ export interface StellarSettlementOptions {
   escrowContractId: string;
   /** The stake token contract (C...). */
   tokenContractId: string;
-  /** Secret key (S...) of the escrow's resolver. Keep it in a secrets manager. */
-  resolverSecret: string;
+  /**
+   * Secret key (S...) of the escrow's resolver. Static: parsed once at boot, so
+   * it cannot be rotated without a restart. Use `resolverSecretProvider` when
+   * that matters.
+   */
+  resolverSecret?: string;
+  /**
+   * Alternative to `resolverSecret`: called to fetch the resolver secret (S...)
+   * before each resolver invocation (`openPot`, `resolve`, `refund`), so the key
+   * can be rotated in a secrets manager without a restart. Results are cached
+   * for `resolverSecretCacheTtlMs`, and concurrent calls share one read.
+   *
+   * One of `resolverSecret` / `resolverSecretProvider` is required in stellar
+   * mode. A static secret is parsed once and can never change, so a provider is
+   * what makes rotation possible without downtime.
+   */
+  resolverSecretProvider?: () => Promise<string>;
+  /** How long a `resolverSecretProvider` result is trusted. Default 60,000 ms. */
+  resolverSecretCacheTtlMs?: number;
   /** Default `non-custodial`: players sign their own stakes. */
   custodyMode?: CustodyMode;
   /**
@@ -105,10 +122,15 @@ export function validateOptions(options: PvpSettlementOptions): void {
     if (!stellar) {
       throw new Error('Settlement mode "stellar" needs the `stellar` options');
     }
-    for (const key of ['rpcUrl', 'networkPassphrase', 'escrowContractId', 'tokenContractId', 'resolverSecret'] as const) {
+    for (const key of ['rpcUrl', 'networkPassphrase', 'escrowContractId', 'tokenContractId'] as const) {
       if (!stellar[key]) {
         throw new Error(`Settlement mode "stellar" needs stellar.${key}`);
       }
+    }
+    if (!stellar.resolverSecret && !stellar.resolverSecretProvider) {
+      throw new Error(
+        'Settlement mode "stellar" needs stellar.resolverSecret or stellar.resolverSecretProvider',
+      );
     }
     if (stellar.custodyMode === 'custodial' && stellar.network === 'public') {
       throw new Error(

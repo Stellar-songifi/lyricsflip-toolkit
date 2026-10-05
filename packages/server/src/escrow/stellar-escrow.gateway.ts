@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions, StellarSettlementOptions } from '../options';
+import { ResolverKeyProvider } from './resolver-secret';
 import {
   InvalidStakeEnvelopeError,
   PvpEscrowClient,
@@ -21,7 +22,9 @@ import {
 /**
  * Settlement against a deployed `pvp-escrow` contract.
  *
- * - Resolver calls are signed with `stellar.resolverSecret`.
+ * - Resolver calls are signed with the key `stellar.resolverSecret` holds, or,
+ *   when `stellar.resolverSecretProvider` is set, re-read from it before each
+ *   call so the key can be rotated without a restart.
  * - Non-custodial (default): each player's wallet signs its own stake; the
  *   signed envelope is checked to be exactly that stake before submission.
  * - Custodial (refused on `public`): the server signs stakes with the key
@@ -35,13 +38,20 @@ export class StellarEscrowGateway implements EscrowGateway {
   readonly mode = 'stellar' as const;
   private readonly logger = new Logger(StellarEscrowGateway.name);
   private readonly config: StellarSettlementOptions;
-  private readonly resolver: Keypair;
+  private readonly resolverKeys: ResolverKeyProvider;
   readonly client: PvpEscrowClient;
 
   constructor(@Inject(PVP_SETTLEMENT_OPTIONS) options: PvpSettlementOptions) {
     if (!options.stellar) throw new Error('StellarEscrowGateway needs the `stellar` options');
     this.config = options.stellar;
-    this.resolver = Keypair.fromSecret(this.config.resolverSecret);
+    this.resolverKeys = new ResolverKeyProvider(this.config, this.logger);
+    if (!this.config.resolverSecretProvider && this.config.network !== 'local') {
+      this.logger.warn(
+        `Stellar settlement is signing with a static resolverSecret on "${this.config.network}": ` +
+          'the resolver key cannot be rotated without a restart. Set ' +
+          '`stellar.resolverSecretProvider` to rotate it without downtime.',
+      );
+    }
     const rpc = new SorobanRpc({
       rpcUrl: this.config.rpcUrl,
       networkPassphrase: this.config.networkPassphrase,
@@ -50,8 +60,17 @@ export class StellarEscrowGateway implements EscrowGateway {
     this.client = new PvpEscrowClient(rpc, this.config.escrowContractId);
   }
 
+  /**
+   * The resolver public key as last seen, without hitting the secrets manager.
+   * Empty until a provider has been read at least once.
+   */
   get resolverAddress(): string {
-    return this.resolver.publicKey();
+    return this.resolverKeys.lastKnownAddress ?? '';
+  }
+
+  /** The resolver public key right now, re-reading through the provider if it is due. */
+  async currentResolverAddress(): Promise<string> {
+    return (await this.resolverKeys.resolve()).publicKey();
   }
 
   async openPot(params: OpenPotParams): Promise<OpenPotOutcome> {
@@ -66,7 +85,9 @@ export class StellarEscrowGateway implements EscrowGateway {
         ? { status: 'confirmed', txHash: null, deadlineLedger: existing.deadlineLedger }
         : { status: 'failed', txHash: null, error: 'A different pot already exists under this id' };
     }
-    const outcome = await this.attempt('open_pot', () => this.client.openPot(this.resolver, params));
+    const outcome = await this.attempt('open_pot', async () =>
+      this.client.openPot(await this.resolverKeys.resolve(), params),
+    );
     if (outcome.status !== 'confirmed') return outcome;
     const pot = await this.safeGetPot(params.potId);
     return { ...outcome, deadlineLedger: pot?.deadlineLedger };
@@ -114,11 +135,15 @@ export class StellarEscrowGateway implements EscrowGateway {
   }
 
   resolve(potId: string, winner: string): Promise<SubmitOutcome> {
-    return this.attempt('resolve', () => this.client.resolve(this.resolver, potId, winner));
+    return this.attempt('resolve', async () =>
+      this.client.resolve(await this.resolverKeys.resolve(), potId, winner),
+    );
   }
 
   refund(potId: string): Promise<SubmitOutcome> {
-    return this.attempt('refund', () => this.client.refund(this.resolver, potId));
+    return this.attempt('refund', async () =>
+      this.client.refund(await this.resolverKeys.resolve(), potId),
+    );
   }
 
   async getPot(potId: string): Promise<PotState | null> {

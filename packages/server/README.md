@@ -42,7 +42,9 @@ exports `WagerService`, `WalletLinkService` and `Sep10Service`.
 | `stellar.network` | — | `testnet`, `futurenet`, `local` or `public` |
 | `stellar.rpcUrl`, `stellar.networkPassphrase` | — | Soroban RPC endpoint and network |
 | `stellar.escrowContractId`, `stellar.tokenContractId` | — | Deployed `pvp-escrow` and stake token |
-| `stellar.resolverSecret` | — | The escrow's resolver key (S...). Keep it in a secrets manager. |
+| `stellar.resolverSecret` | — | The escrow's resolver key (S...). One of this or `resolverSecretProvider` is required. Static: parsed once at boot, so it cannot be rotated without a restart. |
+| `stellar.resolverSecretProvider` | — | `() => Promise<string>`: fetched before each resolver call and cached for `resolverSecretCacheTtlMs`, so the key can be rotated without a restart. |
+| `stellar.resolverSecretCacheTtlMs` | 60,000 | How long a `resolverSecretProvider` result is trusted |
 | `stellar.custodyMode` | `non-custodial` | `custodial` signs stakes with `custodialPlayerSecret(playerId)`. Refused on `public`. |
 | `stellar.stakeTxTimeoutSeconds` | 300 | How long a player has to sign their stake |
 | `stellar.confirmTimeoutSeconds` | 30 | Polling before a submission is reported `pending` |
@@ -86,6 +88,40 @@ All routes need `authenticate` to return a player id. None of them creates, sett
 | `POST /wagers/:id/stake` | `{ signedTransactionXdr? }` |
 | `GET /wallet` | The player's linked wallet |
 | `POST /wallet/challenge` · `/wallet/verify` | SEP-10 link a wallet to the signed-in player |
+| `GET /wager/resolver-address` | The resolver public key the server signs with right now (stellar mode only) — see the runbook below |
+
+## Rotating the resolver key
+
+The contract's `set_resolver(new_address)` lets the admin rotate the on-chain
+resolver. If the old secret is compromised, every settlement call between that
+rotation and a server restart would still be signed with the compromised key.
+A `stellar.resolverSecretProvider` bounds that window to
+`resolverSecretCacheTtlMs` (60 s by default) instead of the process lifetime.
+
+1. Generate the replacement resolver key and fund it, as for the original.
+2. **Update the secrets manager first** so `resolverSecretProvider` returns the
+   new secret. Within one TTL every instance signs with the new key. Until the
+   contract is updated (step 3) those resolver calls fail with an auth error —
+   nothing moves on-chain, and the wager reconciler retries them. Doing it in
+   this order is what closes the window in which a compromised key is still in
+   use; the cost is a short spell of failing settlements, bounded by the TTL.
+3. Wait out one TTL so every instance has re-read the secret.
+4. Call `set_resolver(new_address)` on the contract as the admin. From this
+   point the contract enforces the new resolver and settlement resumes.
+5. Confirm the live server matches the chain:
+
+   ```bash
+   curl -H 'Authorization: Bearer <operator token>' https://api.example.com/wager/resolver-address
+   # {"resolverAddress":"G..."} — compare with the contract's get_config
+   ```
+
+   A mismatch means an instance has not re-read the secret yet; check that the
+   secrets manager value is the new key and that the TTL has elapsed.
+6. Only once every instance reports the new address, delete the old secret.
+
+`GET /wager/resolver-address` sits behind the same guard as the other routes, so
+someone must be authenticated to read it. The value is public either way — it is
+readable on-chain via `get_config` — so the route never leaks a secret.
 
 ## Events
 
