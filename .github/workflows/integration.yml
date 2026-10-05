@@ -9,11 +9,35 @@ on:
       - "contracts/**"
       - "packages/server/**"
       - "packages/sdk/**"
+      # apps/game-server and examples/coin-flip consume the SDK, so a change
+      # there can break settlement without touching any package. game-server is
+      # the likeliest source of a regression that only this workflow catches.
+      - "apps/game-server/**"
+      - "examples/**"
+      # The job installs from the lockfile and builds the SDK, so dependency
+      # changes can break it too. Kept in step with node.yml and mobile.yml.
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/integration.yml"
+
+# One run per branch: a push that supersedes an in-flight run cancels it rather
+# than queueing behind it, which is what you want for a ~15 minute job that
+# starts a Docker network. `github.ref` is the PR's merge ref, so this only
+# ever cancels runs for the same branch or PR.
+concurrency:
+  group: "integration-${{ github.ref }}"
+  cancel-in-progress: true
 
 jobs:
   stellar-local:
     runs-on: ubuntu-latest
+    # A cold run is dominated by the Rust side: this workflow has no cargo
+    # cache, so the wasm32v1-none target and the whole soroban-sdk graph are
+    # compiled from scratch (minutes on their own). Then the quickstart image
+    # pull, `npm ci`, the wait-for-network loop below (up to 5 minutes before
+    # it gives up), and the integration suite. Cold runs land around 10-15
+    # minutes, so 30 leaves headroom for a slow runner or a flaky image pull
+    # without letting a wedged job sit for the 6-hour default.
     timeout-minutes: 30
     services:
       postgres:
