@@ -36,11 +36,16 @@ Pot status goes `Open → Staked → Resolved | Refunded`.
 | Event | Topics | Data |
 |---|---|---|
 | `PotOpened` | `session_id` | `player_a`, `player_b`, `stake_amount`, `deadline_ledger` |
-| `Staked` | `session_id` | `player` |
+| `Staked` | `session_id` | `player`, `stake_amount` |
 | `Resolved` | `session_id` | `winner`, `payout` |
-| `Refunded` | `session_id` | — |
+| `Refunded` | `session_id` | `player_a_amount`, `player_b_amount` |
 | `Claimed` | `session_id` | `player`, `amount` |
 | `RoleChanged` | `role` (`resolver` or `admin`) | `address` |
+
+Every event that moves funds carries the amount, so an indexer can reconstruct flows from the log
+alone instead of reading the `Pot` struct: `Staked.stake_amount`, `Refunded.player_a_amount` /
+`Refunded.player_b_amount` and `Claimed.amount`. In a `Refunded` event an amount is `0` for a player
+who never staked (or who already reclaimed their stake with `claim_refund`).
 
 ## Prerequisites
 

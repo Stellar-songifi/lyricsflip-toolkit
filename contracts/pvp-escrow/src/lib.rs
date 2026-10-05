@@ -112,12 +112,16 @@ pub struct PotOpened {
 }
 
 /// Published by `stake`.
+///
+/// `stake_amount` is included so an indexer can reconstruct the flow from the
+/// event alone, without reading the `Pot` struct (mirrors `Claimed.amount`).
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Staked {
     #[topic]
     pub session_id: BytesN<16>,
     pub player: Address,
+    pub stake_amount: i128,
 }
 
 /// Published by `resolve`.
@@ -131,11 +135,17 @@ pub struct Resolved {
 }
 
 /// Published by `refund`.
+///
+/// Carries the amount actually returned per player. A player who never staked
+/// gets nothing, so their field is `0` — the event alone is enough to
+/// reconstruct the refund for an indexer.
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Refunded {
     #[topic]
     pub session_id: BytesN<16>,
+    pub player_a_amount: i128,
+    pub player_b_amount: i128,
 }
 
 /// Published by `claim_refund`.
@@ -293,6 +303,7 @@ impl PvpEscrow {
         Staked {
             session_id: session_id.clone(),
             player,
+            stake_amount: pot.stake_amount,
         }
         .publish(&env);
 
@@ -345,18 +356,25 @@ impl PvpEscrow {
         let token_client = Self::token(&env)?;
         let contract_address = env.current_contract_address();
 
+        let mut player_a_amount: i128 = 0;
+        let mut player_b_amount: i128 = 0;
+
         if pot.player_a_staked {
             token_client.transfer(&contract_address, &pot.player_a, &pot.stake_amount);
             pot.player_a_staked = false;
+            player_a_amount = pot.stake_amount;
         }
         if pot.player_b_staked {
             token_client.transfer(&contract_address, &pot.player_b, &pot.stake_amount);
             pot.player_b_staked = false;
+            player_b_amount = pot.stake_amount;
         }
 
         pot.status = PotStatus::Refunded;
         Refunded {
             session_id: session_id.clone(),
+            player_a_amount,
+            player_b_amount,
         }
         .publish(&env);
         Self::save_pot(&env, &session_id, &pot);

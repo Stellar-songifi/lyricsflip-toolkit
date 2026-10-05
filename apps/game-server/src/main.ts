@@ -1,20 +1,24 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService<AppConfig, true>);
 
-  // Registered before `listen()` so cross-origin requests from a browser
-  // client (the web game) are never rejected. The mobile app needs no CORS.
-  app.enableCors({
-    origin: configService.get('corsOrigin', { infer: true }),
-    credentials: true,
-  });
+  const corsOrigin = configService.get('corsOrigin', { infer: true });
+  if (corsOrigin) {
+    app.enableCors({
+      origin: corsOrigin,
+      credentials: true,
+    });
+  } else {
+    logger.warn('CORS is disabled because CORS_ORIGIN is not configured.');
+  }
 
   app.useGlobalPipes(
     new ValidationPipe({
