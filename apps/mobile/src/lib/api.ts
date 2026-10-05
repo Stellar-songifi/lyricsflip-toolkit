@@ -98,24 +98,46 @@ export class ApiError extends Error {
   }
 }
 
-export function createApi(baseUrl: string, getToken: () => string | null, fetchImpl: typeof fetch = fetch) {
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export function createApi(
+  baseUrl: string,
+  getToken: () => string | null,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = 30_000,
+) {
+  async function request<T>(method: string, path: string, body?: unknown, customTimeoutMs?: number): Promise<T> {
     const token = getToken();
-    const res = await fetchImpl(`${baseUrl}${path}`, {
-      method,
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
-    const json = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      const message = Array.isArray(json?.message) ? json.message.join(', ') : json?.message;
-      throw new ApiError(res.status, message ?? `Request failed (${res.status})`);
+    const controller = new AbortController();
+    const effectiveTimeout = customTimeoutMs ?? timeoutMs;
+    const timer = setTimeout(() => controller.abort(), effectiveTimeout);
+
+    try {
+      const res = await fetchImpl(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      const json = text ? JSON.parse(text) : null;
+      if (!res.ok) {
+        const message = Array.isArray(json?.message) ? json.message.join(', ') : json?.message;
+        throw new ApiError(res.status, message ?? `Request failed (${res.status})`);
+      }
+      return json as T;
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && (err.name === 'AbortError' || controller.signal.aborted)) {
+        throw new ApiError(408, 'Request timed out');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return json as T;
   }
 
   return {
@@ -180,8 +202,10 @@ export function createApi(baseUrl: string, getToken: () => string | null, fetchI
         request<{ enabled: boolean; asset: string | null; amount: string | null; rpcUrl: string | null; networkPassphrase: string | null }>(
           'GET',
           '/faucet',
+          undefined,
+          10_000,
         ),
-      claim: () => request<{ txHash: string; amount: string }>('POST', '/faucet'),
+      claim: () => request<{ txHash: string; amount: string }>('POST', '/faucet', undefined, 10_000),
     },
     notifications: {
       list: () => request<Notification[]>('GET', '/notifications'),

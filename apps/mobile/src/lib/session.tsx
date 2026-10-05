@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Keypair } from '@stellar/stellar-sdk';
-import { API_URL } from './config';
+import { API_TIMEOUT_MS, API_URL } from './config';
 import { createApi, type Api, type User } from './api';
 import { secureStore } from './secure-store';
 import { fundWithFriendbot, loadOrCreateWallet, signEnvelope } from './wallet';
@@ -28,7 +28,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [wallet, setWallet] = useState<Keypair | null>(null);
   const [ready, setReady] = useState(false);
-  const api = useMemo(() => createApi(API_URL, () => token.current), []);
+  const api = useMemo(() => createApi(API_URL, () => token.current, fetch, API_TIMEOUT_MS), []);
 
   const refreshUser = useCallback(async () => {
     setUser(await api.users.me());
