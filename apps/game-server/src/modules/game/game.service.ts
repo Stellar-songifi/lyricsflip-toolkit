@@ -45,13 +45,14 @@ export interface CreateSessionOptions {
   rounds?: number;
 }
 
+/**
+ * Game session lifecycle. All per-session state lives on the `game_sessions`
+ * row (streaks, seen lyric ids, scores) rather than in process-local Maps,
+ * so a restart, rolling deploy or crash mid-session does not lose it
+ * (issue #2).
+ */
 @Injectable()
 export class GameService {
-  /** `sessionId:userId` -> current correct-answer streak. Reset to 0 on a miss. */
-  private readonly streaks = new Map<string, number>();
-  /** sessionId -> lyric ids already shown, so a session never repeats one. */
-  private readonly seenLyrics = new Map<string, string[]>();
-
   constructor(
     @InjectRepository(GameSession)
     private readonly sessionsRepository: Repository<GameSession>,
@@ -94,11 +95,10 @@ export class GameService {
       currentRound: 1,
       totalRounds,
       scores: { [hostUserId]: 0 },
+      currentStreak: {},
+      seenLyricIds: [lyric.id],
     });
-    const saved = await this.sessionsRepository.save(session);
-    this.seenLyrics.set(saved.id, [lyric.id]);
-
-    return saved;
+    return this.sessionsRepository.save(session);
   }
 
   async joinSession(sessionId: string, userId: string): Promise<GameSession> {
@@ -115,6 +115,7 @@ export class GameService {
     if (!session.playerIds.includes(userId)) {
       session.playerIds.push(userId);
       session.scores[userId] = 0;
+      session.currentStreak[userId] = 0;
       await this.sessionsRepository.save(session);
     }
     return session;
@@ -166,10 +167,9 @@ export class GameService {
     }
 
     const lyric = await this.lyricsService.findById(session.currentLyricId);
-    const streakKey = `${sessionId}:${userId}`;
-    const streak = this.streaks.get(streakKey) ?? 0;
+    const streak = session.currentStreak[userId] ?? 0;
 
-    // A guess can name either the title or the artist â€” score against both
+    // A guess can name either the title or the artist — score against both
     // and keep whichever classifies better.
     const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
     const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);
@@ -177,9 +177,9 @@ export class GameService {
       byArtist.points > byTitle.points ? byArtist : byTitle;
 
     if (finalOutcome === GuessOutcome.CORRECT) {
-      this.streaks.set(streakKey, streak + 1);
+      session.currentStreak[userId] = streak + 1;
     } else if (finalOutcome === GuessOutcome.MISS) {
-      this.streaks.set(streakKey, 0);
+      session.currentStreak[userId] = 0;
     }
 
     session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
@@ -189,12 +189,9 @@ export class GameService {
     if (session.currentRound >= session.totalRounds) {
       session.status = GameSessionStatus.FINISHED;
       session.currentLyricId = null;
-      for (const playerId of session.playerIds) this.streaks.delete(`${sessionId}:${playerId}`);
-      this.seenLyrics.delete(sessionId);
     } else {
-      const seen = this.seenLyrics.get(sessionId) ?? [];
-      const next = await this.lyricsService.getRandom(seen);
-      this.seenLyrics.set(sessionId, [...seen, next.id]);
+      const next = await this.lyricsService.getRandom(session.seenLyricIds);
+      session.seenLyricIds = [...session.seenLyricIds, next.id];
       session.currentLyricId = next.id;
       session.currentRound += 1;
       nextLyric = toPublicLyric(next);
@@ -224,7 +221,7 @@ export class GameService {
     return {
       outcome: finalOutcome,
       pointsAwarded: finalPoints,
-      streak: this.streaks.get(streakKey) ?? 0,
+      streak: session.currentStreak[userId] ?? 0,
       nextLyric,
       sessionStatus: session.status,
       totalRounds: session.totalRounds,

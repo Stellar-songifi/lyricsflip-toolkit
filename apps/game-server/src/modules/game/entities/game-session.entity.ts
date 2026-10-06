@@ -57,6 +57,21 @@ export class GameSession {
   @Column({ type: 'jsonb', default: () => "'{}'" })
   scores: Record<string, number>;
 
+  /**
+   * Per-player consecutive-correct-answer count, keyed by userId. Reset to 0
+   * on a miss. Persisted so a restart mid-session keeps the streak that feeds
+   * `STREAK_BONUS` (issue #2).
+   */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  currentStreak: Record<string, number>;
+
+  /**
+   * Lyric ids this session has already presented. Persisted so a restart can
+   * never re-show a lyric within the same session (issue #2).
+   */
+  @Column({ type: 'uuid', array: true, default: () => "'{}'" })
+  seenLyricIds: string[];
+
   @CreateDateColumn()
   createdAt: Date;
 
