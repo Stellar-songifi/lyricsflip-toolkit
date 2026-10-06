@@ -101,9 +101,9 @@ export interface Harness {
  */
 export async function createHarness(
   overrides: Partial<PvpSettlementOptions> = {},
-  { scripted = true }: { scripted?: boolean } = {},
+  { scripted = true, schema: providedSchema }: { scripted?: boolean; schema?: string } = {},
 ): Promise<Harness> {
-  const schema = `pvp_test_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  const schema = providedSchema ?? `pvp_test_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const admin = new Client({ connectionString: DATABASE_URL });
   await admin.connect();
   await admin.query(`CREATE SCHEMA "${schema}"`);

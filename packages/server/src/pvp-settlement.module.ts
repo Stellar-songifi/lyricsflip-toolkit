@@ -13,11 +13,13 @@ import { WagerReconcilerService } from './reconcile/wager-reconciler.service';
 import { Wager } from './wager/wager.entity';
 import { WagerService } from './wager/wager.service';
 import { Sep10Service } from './wallet/sep10.service';
+import { Sep10CleanupService } from './wallet/sep10-cleanup.service';
+import { Sep10Redeemed } from './wallet/sep10-redeemed.entity';
 import { WalletLink } from './wallet/wallet-link.entity';
 import { WalletLinkService } from './wallet/wallet-link.service';
 
 /** Entities to add to the host app's TypeORM `entities`. */
-export const PVP_ENTITIES = [Wager, WalletLink, MockPot];
+export const PVP_ENTITIES = [Wager, WalletLink, MockPot, Sep10Redeemed];
 
 export interface PvpSettlementAsyncOptions extends Pick<ModuleMetadata, 'imports'> {
   inject?: any[];
@@ -84,6 +86,7 @@ export class PvpSettlementModule {
         },
         WalletLinkService,
         Sep10Service,
+        Sep10CleanupService,
         WagerService,
         WagerReconcilerService,
         PvpPlayerGuard,

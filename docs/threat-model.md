@@ -34,7 +34,7 @@
 | A player stakes after the pot times out | Refused by the contract (`DeadlinePassed`). |
 | Resolver pays out after a player reclaimed a stake | Refused by the contract. Once anyone has claimed, `resolve` fails, and the reconciler marks the wager `refunded` or `failed`, never `won`. |
 | Server uses custodial mode on mainnet | Refused at boot (`validateOptions`), and `StellarEscrowGateway` also refuses custodial signing on `public`. |
-| SEP-10 signed challenge replayed | Refused by the same process. Redeemed challenges are remembered in memory until they expire (5 minutes by default), so a restart or a second instance could accept one replay within that window. Treat a signed challenge like a password. |
+| SEP-10 signed challenge replayed | Refused. The challenge hash is inserted into `pvp_sep10_redeemed` with `INSERT ... ON CONFLICT DO NOTHING`; a no-op insert is a replay. This is atomic across every instance sharing the database and survives process restarts. Rows are swept once the challenge time bound lapses. Still treat a signed challenge like a password — one that never reaches a server cannot be redeemed at all. |
 | Wallet switched mid-wager to redirect a payout | Refused. A player can't change wallets while a wager is in flight, and payouts go to the addresses fixed when the pot was opened. |
 | Mobile device lost (LyricsFlip app) | The app's key only ever holds free testnet tokens, and it refuses to sign for any other network. See `docs/wallet-spike.md`. |
 
