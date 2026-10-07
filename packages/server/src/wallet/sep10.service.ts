@@ -105,12 +105,12 @@ export class Sep10Service {
       .into(Sep10Redeemed)
       .values({ hash, expiresAt: new Date(maxTime * 1000) })
       .orIgnore()
+      .returning(['hash'])
       .execute();
 
-    // `identifiers` is empty (or raw has no rows) when the row already existed.
-    const inserted =
-      (result.identifiers?.length ?? 0) > 0 ||
-      (Array.isArray(result.raw) && result.raw.length > 0);
+    // RETURNING yields no row when the conflict skipped the insert. Don't use
+    // `identifiers`: TypeORM fills it from the supplied primary key either way.
+    const inserted = Array.isArray(result.raw) && result.raw.length > 0;
     if (!inserted) {
       throw new UnauthorizedException('Challenge has already been used');
     }
