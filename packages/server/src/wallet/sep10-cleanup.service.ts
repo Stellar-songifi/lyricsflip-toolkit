@@ -1,5 +1,5 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
-import { DEFAULTS, Inject, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
 import { Sep10Service } from './sep10.service';
 
 /** How often to sweep expired redeemed challenges, in seconds. */

@@ -22,7 +22,7 @@ export class AuthService {
   }
 
   async verify(walletAddress: string, signedTransactionXdr: string) {
-    const address = this.sep10.verify(walletAddress, signedTransactionXdr);
+    const address = await this.sep10.verify(walletAddress, signedTransactionXdr);
     const user = await this.usersService.findOrCreateByWallet(address);
     await this.walletLinks.link(user.id, address);
     const accessToken = this.jwtService.sign({ sub: user.id, walletAddress: address });

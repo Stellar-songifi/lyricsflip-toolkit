@@ -55,7 +55,7 @@ class CoinFlipController {
   @Post('login/verify')
   @HttpCode(200)
   async verify(@Body() dto: VerifyDto) {
-    const address = this.sep10.verify(dto.address, dto.signedTransactionXdr);
+    const address = await this.sep10.verify(dto.address, dto.signedTransactionXdr);
     await this.links.link(address, address);
     return { token: tokens.issue(address) };
   }

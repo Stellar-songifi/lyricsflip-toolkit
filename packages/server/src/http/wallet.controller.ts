@@ -27,7 +27,7 @@ export class WalletController {
   @Post('verify')
   @HttpCode(200)
   async verify(@PlayerId() playerId: string, @Body() dto: WalletVerifyDto) {
-    const address = this.sep10.verify(dto.address, dto.signedTransactionXdr);
+    const address = await this.sep10.verify(dto.address, dto.signedTransactionXdr);
     const link = await this.links.link(playerId, address);
     return { address: link.address, verifiedAt: link.verifiedAt };
   }
