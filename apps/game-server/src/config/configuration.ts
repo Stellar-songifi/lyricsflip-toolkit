@@ -115,9 +115,9 @@ export default (): AppConfig => {
 
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
-    nodeEnv: process.env.NODE_ENV ?? 'development',
+    nodeEnv,
     roundsPerSession,
-    corsOrigin: process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    corsOrigin,
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',

@@ -36,6 +36,9 @@ describe('configuration: ROUNDS_PER_SESSION', () => {
       process.env.ROUNDS_PER_SESSION = bad;
       expect(() => configuration()).toThrow(/ROUNDS_PER_SESSION must be a positive integer/);
     }
+  });
+});
+
 describe('configuration', () => {
   const originalEnv = process.env;
 
