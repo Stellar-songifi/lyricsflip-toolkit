@@ -23,6 +23,9 @@ export const DIFFICULTY_MULTIPLIER: Record<Difficulty, number> = {
 /** A near-miss threshold: distance <= 20% of the target's length counts as partial. */
 const PARTIAL_MATCH_RATIO = 0.2;
 
+/** Maximum length of either string fed to the edit-distance matrix. */
+const MAX_LEVENSHTEIN_INPUT = 500;
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -35,6 +38,11 @@ function normalize(value: string): string {
 
 /** Classic edit distance — small strings only (song titles / artist names). */
 function levenshtein(a: string, b: string): number {
+  // Defence-in-depth: never allocate a matrix larger than 500 x 500.
+  if (a.length > MAX_LEVENSHTEIN_INPUT || b.length > MAX_LEVENSHTEIN_INPUT) {
+    return Math.max(a.length, b.length);
+  }
+
   const rows = a.length + 1;
   const cols = b.length + 1;
   const dp: number[][] = Array.from({ length: rows }, () => new Array(cols).fill(0));
