@@ -1,4 +1,4 @@
-import { DynamicModule, Module, ModuleMetadata, Provider, Type } from '@nestjs/common';
+import { DynamicModule, MiddlewareConsumer, Module, ModuleMetadata, Provider, Type } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ESCROW_GATEWAY, EscrowGateway } from './escrow/escrow.gateway';
 import { MockEscrowGateway } from './escrow/mock-escrow.gateway';
@@ -17,6 +17,7 @@ import { Sep10CleanupService } from './wallet/sep10-cleanup.service';
 import { Sep10Redeemed } from './wallet/sep10-redeemed.entity';
 import { WalletLink } from './wallet/wallet-link.entity';
 import { WalletLinkService } from './wallet/wallet-link.service';
+import { RequestIdMiddleware } from './logger/request-id.middleware';
 
 /** Entities to add to the host app's TypeORM `entities`. */
 export const PVP_ENTITIES = [Wager, WalletLink, MockPot, Sep10Redeemed];
@@ -93,5 +94,12 @@ export class PvpSettlementModule {
       ],
       exports: [WagerService, WalletLinkService, Sep10Service, ESCROW_GATEWAY, PVP_SETTLEMENT_OPTIONS],
     };
+  }
+}
+
+export class PvpSettlementMiddlewareConsumer implements MiddlewareConsumer {
+  constructor(private readonly moduleRef: any) {}
+  apply(): void {
+    // No-op. Request ID middleware is wired by the host app via configure().
   }
 }
