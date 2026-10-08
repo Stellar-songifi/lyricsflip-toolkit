@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
+  const logger = new Logger('bootstrap');
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService<AppConfig, true>);
 
@@ -39,10 +39,9 @@ async function bootstrap() {
 
   const port = configService.get('port', { infer: true });
   await app.listen(port);
-   
-  console.log(`LyricsFlip API listening on http://localhost:${port}`);
-   
-  console.log(`Swagger UI at http://localhost:${port}/api/docs`);
+
+  logger.log(`LyricsFlip API listening on http://localhost:${port}`);
+  logger.log(`Swagger UI at http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

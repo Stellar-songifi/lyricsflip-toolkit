@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
+import { StructuredLogger } from '../logging/structured-logger';
 import { InvalidAmountError, assertPositiveStroops } from '@lyricsflip-toolkit/sdk';
 import { ESCROW_GATEWAY, EscrowGateway, SubmitOutcome, UnsignedStake } from '../escrow/escrow.gateway';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
@@ -50,7 +51,7 @@ export type MatchResult = { winnerId: string } | { draw: true };
  */
 @Injectable()
 export class WagerService {
-  private readonly logger = new Logger(WagerService.name);
+  private readonly logger = new StructuredLogger(WagerService.name);
 
   constructor(
     @InjectRepository(Wager) private readonly wagers: Repository<Wager>,
@@ -473,7 +474,11 @@ export class WagerService {
   }
 
   private async fail(wager: Wager, reason: string): Promise<Wager> {
-    this.logger.error(`Wager ${wager.id} needs an operator: ${reason}`);
+    this.logger.error('Wager needs an operator', {
+      wagerId: wager.id,
+      reason,
+      status: wager.status,
+    });
     const moved = await this.transition(wager.id, wager.status, {
       status: WagerStatus.FAILED,
       failureReason: reason,
@@ -539,7 +544,11 @@ export class WagerService {
     try {
       this.options.onEvent?.(event);
     } catch (err) {
-      this.logger.error(`onEvent handler threw for ${event.type}`, err as Error);
+      this.logger.error('onEvent handler threw', {
+        eventType: event.type,
+        error: (err as Error)?.message,
+        stack: (err as Error)?.stack,
+      });
     }
   }
 }

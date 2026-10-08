@@ -1,6 +1,7 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions, StellarSettlementOptions } from '../options';
+import { LoggerService } from '../logger/logger.service';
 import { ResolverKeyProvider } from './resolver-secret';
 import {
   InvalidStakeEnvelopeError,
@@ -22,7 +23,7 @@ import {
 /**
  * Settlement against a deployed `pvp-escrow` contract.
  *
- * - Resolver calls are signed with the key `stellar.resolverSecret` holds, or,
+ * - Resolver calls are signed with the key `stellar.resolverSecret` Holds, or,
  *   when `stellar.resolverSecretProvider` is set, re-read from it before each
  *   call so the key can be rotated without a restart.
  * - Non-custodial (default): each player's wallet signs its own stake; the
@@ -36,7 +37,7 @@ import {
 @Injectable()
 export class StellarEscrowGateway implements EscrowGateway {
   readonly mode = 'stellar' as const;
-  private readonly logger = new Logger(StellarEscrowGateway.name);
+  private readonly logger = new LoggerService(StellarEscrowGateway.name);
   private readonly config: StellarSettlementOptions;
   private readonly resolverKeys: ResolverKeyProvider;
   readonly client: PvpEscrowClient;
@@ -50,6 +51,7 @@ export class StellarEscrowGateway implements EscrowGateway {
         `Stellar settlement is signing with a static resolverSecret on "${this.config.network}": ` +
           'the resolver key cannot be rotated without a restart. Set ' +
           '`stellar.resolverSecretProvider` to rotate it without downtime.',
+        { network: this.config.network },
       );
     }
     const rpc = new SorobanRpc({
@@ -106,6 +108,10 @@ export class StellarEscrowGateway implements EscrowGateway {
       );
       return { transactionXdr: transaction.toXDR(), networkPassphrase: this.config.networkPassphrase };
     } catch (err) {
+      this.logger.error(
+        'Could not build the stake transaction',
+        LoggerService.errorFields(err, { potId, playerId }),
+      );
       throw new BadRequestException(`Could not build the stake transaction: ${(err as Error).message}`);
     }
   }
@@ -132,6 +138,10 @@ export class StellarEscrowGateway implements EscrowGateway {
       this.client.assertIsStake(transaction, potId, player);
     } catch (err) {
       if (err instanceof InvalidStakeEnvelopeError) throw new BadRequestException(err.message);
+      this.logger.error(
+        'Not a valid signed transaction envelope',
+        LoggerService.errorFields(err, { potId, playerId }),
+      );
       throw new BadRequestException('Not a valid signed transaction envelope');
     }
     return toOutcome(await this.client.rpc.submit(transaction));
@@ -159,7 +169,11 @@ export class StellarEscrowGateway implements EscrowGateway {
     try {
       return toOutcome(await run());
     } catch (err) {
-      this.logger.warn(`${method} was not submitted: ${(err as Error).message}`);
+      // Retryable: nothing reached the network, so the caller can try again.
+      this.logger.warn(
+        `${method} was not submitted`,
+        LoggerService.errorFields(err, { method }),
+      );
       return { status: 'failed', txHash: null, error: (err as Error).message };
     }
   }

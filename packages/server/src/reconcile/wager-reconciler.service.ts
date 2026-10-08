@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { LoggerService } from '../logger/logger.service';
 import { WagerService } from '../wager/wager.service';
 
 /** Arbitrary key for the Postgres advisory lock that serialises sweeps. */
@@ -18,7 +19,7 @@ export const RECONCILE_LOCK_KEY = 7_139_001;
  */
 @Injectable()
 export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleDestroy {
-  private readonly logger = new Logger(WagerReconcilerService.name);
+  private readonly logger = new LoggerService(WagerReconcilerService.name);
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
 
@@ -65,7 +66,8 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
         await runner.query('SELECT pg_advisory_unlock($1)', [RECONCILE_LOCK_KEY]);
       }
     } catch (err) {
-      this.logger.error('Wager reconcile sweep failed', (err as Error).stack);
+      // Retryable: the next sweep will pick the work back up.
+      this.logger.warn('Wager reconcile sweep failed', LoggerService.errorFields(err));
     } finally {
       await runner.release();
     }
@@ -79,10 +81,18 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
       try {
         const after = await this.wagers.reconcile(wager.id);
         if (after.status !== wager.status) {
-          this.logger.log(`Wager ${wager.id}: ${wager.status} → ${after.status}`);
+          this.logger.log('Wager status changed', {
+            wagerId: wager.id,
+            from: wager.status,
+            to: after.status,
+          });
         }
       } catch (err) {
-        this.logger.warn(`Reconcile of wager ${wager.id} threw: ${(err as Error).message}`);
+        // Retryable: the wager remains in the queue for the next sweep.
+        this.logger.warn(
+          'Reconcile of wager threw',
+          LoggerService.errorFields(err, { wagerId: wager.id }),
+        );
       }
     }
   }
