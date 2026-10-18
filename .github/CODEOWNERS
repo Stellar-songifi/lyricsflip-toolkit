@@ -1,0 +1,19 @@
+# Changes to these paths need review from a maintainer. They are where the
+# PolinRider malware hides: build/lint configs that execute on load, editor
+# and devcontainer automation, lockfiles and install scripts, and binaries.
+.vscode/                @simeontech
+.devcontainer/          @simeontech
+.github/                @simeontech
+.gitignore              @simeontech
+**/package.json         @simeontech
+**/package-lock.json    @simeontech
+**/*.config.*           @simeontech
+**/.eslintrc*           @simeontech
+**/*.woff               @simeontech
+**/*.woff2              @simeontech
+**/*.eot                @simeontech
+**/*.ttf                @simeontech
+**/*.otf                @simeontech
+**/*.wasm               @simeontech
+**/*.bat                @simeontech
+**/*.sh                 @simeontech
