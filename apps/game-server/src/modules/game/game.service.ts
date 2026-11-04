@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -154,54 +159,97 @@ export class GameService {
     return toPublicLyric(await this.lyricsService.findById(session.currentLyricId));
   }
 
+  /**
+   * Scores a guess and advances the session. Runs inside a transaction that
+   * takes a pessimistic write lock on the session row, so two guesses that
+   * arrive together (two players, or a double-tap over HTTP and the socket)
+   * can no longer both read the same row and race to `save()` (issue #27).
+   * Only the lyric lookup and the session write happen inside the lock;
+   * `awardXp` and the emitted events happen after commit.
+   */
   async submitGuess(sessionId: string, userId: string, guessText: string): Promise<GuessResult> {
-    const session = await this.getSession(sessionId);
-    if (session.status !== GameSessionStatus.ACTIVE) {
-      throw new BadRequestException('Session is not active');
-    }
-    if (!session.currentLyricId) {
-      throw new BadRequestException('Session has no active card');
-    }
-    if (!session.playerIds.includes(userId)) {
-      throw new BadRequestException('Player is not part of this session');
-    }
+    const locked = await this.sessionsRepository.manager.transaction(async (manager) => {
+      const session = await manager.findOne(GameSession, {
+        where: { id: sessionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!session) {
+        throw new NotFoundException(`Game session ${sessionId} not found`);
+      }
+      if (session.status !== GameSessionStatus.ACTIVE) {
+        throw new BadRequestException('Session is not active');
+      }
+      if (!session.currentLyricId) {
+        throw new BadRequestException('Session has no active card');
+      }
+      if (!session.playerIds.includes(userId)) {
+        throw new BadRequestException('Player is not part of this session');
+      }
 
-    const lyric = await this.lyricsService.findById(session.currentLyricId);
-    const streak = session.currentStreak[userId] ?? 0;
+      const lyric = await this.lyricsService.findById(session.currentLyricId);
+      const streak = session.currentStreak[userId] ?? 0;
 
-    // A guess can name either the title or the artist — score against both
-    // and keep whichever classifies better.
-    const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
-    const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);
-    const { outcome: finalOutcome, points: finalPoints } =
-      byArtist.points > byTitle.points ? byArtist : byTitle;
+      // A guess can name either the title or the artist â€” score against both
+      // and keep whichever classifies better.
+      const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
+      const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);
+      const { outcome: finalOutcome, points: finalPoints } =
+        byArtist.points > byTitle.points ? byArtist : byTitle;
 
-    if (finalOutcome === GuessOutcome.CORRECT) {
-      session.currentStreak[userId] = streak + 1;
-    } else if (finalOutcome === GuessOutcome.MISS) {
-      session.currentStreak[userId] = 0;
-    }
+      if (finalOutcome === GuessOutcome.CORRECT) {
+        session.currentStreak[userId] = streak + 1;
+      } else if (finalOutcome === GuessOutcome.MISS) {
+        session.currentStreak[userId] = 0;
+      }
 
-    session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
+      session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
+
+      let nextLyric: PublicLyric | null = null;
+      let justFinished = false;
+      if (session.currentRound >= session.totalRounds) {
+        // A conditional update, not an unconditional save(): the emitted
+        // finish event (and the settlement it triggers) must fire from the
+        // transition that actually closed the session, not from every
+        // request that merely observed it as finished (issue #28).
+        const result = await manager.update(
+          GameSession,
+          { id: sessionId, status: GameSessionStatus.ACTIVE },
+          {
+            status: GameSessionStatus.FINISHED,
+            currentLyricId: null,
+            scores: session.scores,
+            currentStreak: session.currentStreak,
+          },
+        );
+        if (!result.affected) {
+          // Unreachable while the pessimistic lock holds for the whole
+          // transaction, but kept as a safety net against a future change
+          // that finishes a session outside this lock.
+          throw new ConflictException('Session was already finished');
+        }
+        session.status = GameSessionStatus.FINISHED;
+        session.currentLyricId = null;
+        justFinished = true;
+      } else {
+        const next = await this.lyricsService.getRandom(session.seenLyricIds);
+        session.seenLyricIds = [...session.seenLyricIds, next.id];
+        session.currentLyricId = next.id;
+        session.currentRound += 1;
+        nextLyric = toPublicLyric(next);
+        await manager.save(GameSession, session);
+      }
+
+      return { session, finalOutcome, finalPoints, nextLyric, justFinished };
+    });
+
+    const { session, finalOutcome, finalPoints, nextLyric, justFinished } = locked;
+
     await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
 
-    let nextLyric: PublicLyric | null = null;
-    if (session.currentRound >= session.totalRounds) {
-      session.status = GameSessionStatus.FINISHED;
-      session.currentLyricId = null;
-    } else {
-      const next = await this.lyricsService.getRandom(session.seenLyricIds);
-      session.seenLyricIds = [...session.seenLyricIds, next.id];
-      session.currentLyricId = next.id;
-      session.currentRound += 1;
-      nextLyric = toPublicLyric(next);
-    }
-
-    await this.sessionsRepository.save(session);
-
-    if (session.status === GameSessionStatus.FINISHED) {
+    if (justFinished) {
       // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener.
+      // listens for this. See SettlementListener. Built from the row just
+      // committed, not from in-memory state a later guess may have changed.
       const finished: SessionFinishedEvent = {
         sessionId,
         mode: session.mode,
