@@ -12,29 +12,61 @@ const LYRIC = {
   difficulty: Difficulty.EASY,
 };
 
-/** An in-memory stand-in for the TypeORM repository, so this needs no Postgres. */
-function setup(roundsPerSession: number) {
+/**
+ * An in-memory stand-in for the TypeORM repository, so this needs no Postgres.
+ * `manager.transaction` queues callbacks instead of running them concurrently,
+ * standing in for the pessimistic row lock `GameService.submitGuess` takes in
+ * production (issue #27): two "concurrent" calls in a test still run one at a
+ * time, in the order they were issued.
+ */
+function createMockSessionsRepo() {
   const rows = new Map<string, { id: string; [key: string]: unknown }>();
   let seq = 0;
 
-  const repo = {
-    create: jest.fn((input: Record<string, unknown>) => ({ ...input })),
-    save: jest.fn(async (session: { id?: string }) => {
-      if (!session.id) session.id = `session-${(seq += 1)}`;
-      rows.set(session.id, session as never);
-      return session;
-    }),
-    findOne: jest.fn(async ({ where: { id } }: { where: { id: string } }) => rows.get(id) ?? null),
-    update: jest.fn(
-      async (where: Record<string, unknown>, patch: Record<string, unknown>) => {
-        for (const row of rows.values()) {
-          if (Object.entries(where).every(([key, value]) => row[key] === value)) {
-            Object.assign(row, patch);
-          }
-        }
-      },
-    ),
+  const findOne = async ({ where: { id } }: { where: { id: string } }) => rows.get(id) ?? null;
+  const save = async (session: { id?: string }) => {
+    if (!session.id) session.id = `session-${(seq += 1)}`;
+    rows.set(session.id, session as never);
+    return session;
   };
+  const update = async (where: Record<string, unknown>, patch: Record<string, unknown>) => {
+    let affected = 0;
+    for (const row of rows.values()) {
+      if (Object.entries(where).every(([key, value]) => row[key] === value)) {
+        Object.assign(row, patch);
+        affected += 1;
+      }
+    }
+    return { affected };
+  };
+
+  let queue: Promise<unknown> = Promise.resolve();
+  const manager = {
+    findOne: jest.fn((_entity: unknown, opts: { where: { id: string } }) => findOne(opts)),
+    save: jest.fn((_entity: unknown, session: { id?: string }) => save(session)),
+    update: jest.fn(
+      (_entity: unknown, where: Record<string, unknown>, patch: Record<string, unknown>) =>
+        update(where, patch),
+    ),
+    transaction: jest.fn((cb: (manager: unknown) => Promise<unknown>): Promise<unknown> => {
+      const run: Promise<unknown> = queue.then(() => cb(manager));
+      queue = run.catch(() => undefined);
+      return run;
+    }),
+  };
+
+  return {
+    create: jest.fn((input: Record<string, unknown>) => ({ ...input })),
+    save: jest.fn(save),
+    findOne: jest.fn(findOne),
+    update: jest.fn(update),
+    manager,
+  };
+}
+
+/** An in-memory stand-in for the TypeORM repository, so this needs no Postgres. */
+function setup(roundsPerSession: number) {
+  const repo = createMockSessionsRepo();
   const lyrics = { getRandom: jest.fn(async () => LYRIC), findById: jest.fn(async () => LYRIC) };
   const users = { awardXp: jest.fn(async () => undefined) };
   const events = { emit: jest.fn() };
@@ -119,28 +151,9 @@ describe('GameService session length', () => {
 
 describe('GameService restart persistence (issue #2)', () => {
   it('keeps per-player streak across a service restart', async () => {
-    // One shared rows Map + repo, two service instances: instance B simulates
-    // a process restart that kept the database.
-    const rows = new Map<string, { id: string; [key: string]: unknown }>();
-    let seq = 0;
-    const repo = {
-      create: jest.fn((input: Record<string, unknown>) => ({ ...input })),
-      save: jest.fn(async (session: { id?: string }) => {
-        if (!session.id) session.id = `session-${(seq += 1)}`;
-        rows.set(session.id, session as never);
-        return session;
-      }),
-      findOne: jest.fn(async ({ where: { id } }: { where: { id: string } }) => rows.get(id) ?? null),
-      update: jest.fn(
-        async (where: Record<string, unknown>, patch: Record<string, unknown>) => {
-          for (const row of rows.values()) {
-            if (Object.entries(where).every(([key, value]) => row[key] === value)) {
-              Object.assign(row, patch);
-            }
-          }
-        },
-      ),
-    };
+    // One shared repo, two service instances: instance B simulates a process
+    // restart that kept the database.
+    const repo = createMockSessionsRepo();
     const lyrics = { getRandom: jest.fn(async () => LYRIC), findById: jest.fn(async () => LYRIC) };
     const users = { awardXp: jest.fn(async () => undefined) };
     const events = { emit: jest.fn() };
@@ -168,18 +181,7 @@ describe('GameService restart persistence (issue #2)', () => {
   });
 
   it('does not re-show a lyric the session already saw, across a restart', async () => {
-    const rows = new Map<string, { id: string; [key: string]: unknown }>();
-    let seq = 0;
-    const repo = {
-      create: jest.fn((input: Record<string, unknown>) => ({ ...input })),
-      save: jest.fn(async (session: { id?: string }) => {
-        if (!session.id) session.id = `session-${(seq += 1)}`;
-        rows.set(session.id, session as never);
-        return session;
-      }),
-      findOne: jest.fn(async ({ where: { id } }: { where: { id: string } }) => rows.get(id) ?? null),
-      update: jest.fn(async () => undefined),
-    };
+    const repo = createMockSessionsRepo();
     let n = 0;
     const lyrics = {
       getRandom: jest.fn(async (exclude: string[] = []) => {
