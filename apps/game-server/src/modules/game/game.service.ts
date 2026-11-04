@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -200,29 +205,51 @@ export class GameService {
       session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
 
       let nextLyric: PublicLyric | null = null;
+      let justFinished = false;
       if (session.currentRound >= session.totalRounds) {
+        // A conditional update, not an unconditional save(): the emitted
+        // finish event (and the settlement it triggers) must fire from the
+        // transition that actually closed the session, not from every
+        // request that merely observed it as finished (issue #28).
+        const result = await manager.update(
+          GameSession,
+          { id: sessionId, status: GameSessionStatus.ACTIVE },
+          {
+            status: GameSessionStatus.FINISHED,
+            currentLyricId: null,
+            scores: session.scores,
+            currentStreak: session.currentStreak,
+          },
+        );
+        if (!result.affected) {
+          // Unreachable while the pessimistic lock holds for the whole
+          // transaction, but kept as a safety net against a future change
+          // that finishes a session outside this lock.
+          throw new ConflictException('Session was already finished');
+        }
         session.status = GameSessionStatus.FINISHED;
         session.currentLyricId = null;
+        justFinished = true;
       } else {
         const next = await this.lyricsService.getRandom(session.seenLyricIds);
         session.seenLyricIds = [...session.seenLyricIds, next.id];
         session.currentLyricId = next.id;
         session.currentRound += 1;
         nextLyric = toPublicLyric(next);
+        await manager.save(GameSession, session);
       }
 
-      await manager.save(GameSession, session);
-
-      return { session, finalOutcome, finalPoints, nextLyric };
+      return { session, finalOutcome, finalPoints, nextLyric, justFinished };
     });
 
-    const { session, finalOutcome, finalPoints, nextLyric } = locked;
+    const { session, finalOutcome, finalPoints, nextLyric, justFinished } = locked;
 
     await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
 
-    if (session.status === GameSessionStatus.FINISHED) {
+    if (justFinished) {
       // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener.
+      // listens for this. See SettlementListener. Built from the row just
+      // committed, not from in-memory state a later guess may have changed.
       const finished: SessionFinishedEvent = {
         sessionId,
         mode: session.mode,
