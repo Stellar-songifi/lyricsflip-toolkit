@@ -169,7 +169,7 @@ export class GameService {
     const lyric = await this.lyricsService.findById(session.currentLyricId);
     const streak = session.currentStreak[userId] ?? 0;
 
-    // A guess can name either the title or the artist — score against both
+    // A guess can name either the title or the artist â€” score against both
     // and keep whichever classifies better.
     const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
     const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);

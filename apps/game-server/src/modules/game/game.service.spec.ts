@@ -205,7 +205,7 @@ describe('GameService restart persistence (issue #2)', () => {
     const session = await serviceA.createSession('host', GameMode.SOLO, { rounds: 4 });
     const seenAfterA = new Set<string>([session.currentLyricId!]);
 
-    // Two guesses on A, two on B — never the same lyric twice.
+    // Two guesses on A, two on B â€” never the same lyric twice.
     const g1 = await serviceA.submitGuess(session.id, 'host', 'wrong');
     seenAfterA.add(g1.nextLyric!.id);
     const g2 = await serviceB.submitGuess(session.id, 'host', 'wrong');
