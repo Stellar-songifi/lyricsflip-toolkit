@@ -221,3 +221,24 @@ describe('GameService restart persistence (issue #2)', () => {
   });
 });
 });
+
+describe('GameService submitGuess concurrency (issues #27, #28)', () => {
+  it('sums every awarded point exactly once under 20 concurrent guesses', async () => {
+    const { service, events } = setup(20);
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 20 });
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => service.submitGuess(session.id, 'host', 'Thrift Shop')),
+    );
+
+    const awardedTotal = results.reduce((sum, result) => sum + result.pointsAwarded, 0);
+    const finalSession = await service.getSession(session.id);
+    expect(finalSession.scores.host).toBe(awardedTotal);
+    expect(finalSession.status).toBe(GameSessionStatus.FINISHED);
+
+    const finishEmissions = events.emit.mock.calls.filter(
+      ([eventName]) => eventName === 'game.session.finished',
+    );
+    expect(finishEmissions).toHaveLength(1);
+  });
+});
