@@ -28,13 +28,13 @@ function normalize(value: string): string {
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\p{Extended_Pictographic}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /** Classic edit distance — small strings only (song titles / artist names). */
-function levenshtein(a: string, b: string): number {
+function levenshtein(a: string[], b: string[]): number {
   const rows = a.length + 1;
   const cols = b.length + 1;
   const dp: number[][] = Array.from({ length: rows }, () => new Array(cols).fill(0));
@@ -63,8 +63,9 @@ export function classifyGuess(guess: string, target: string): GuessOutcome {
     return GuessOutcome.CORRECT;
   }
 
-  const distance = levenshtein(normalizedGuess, normalizedTarget);
-  const allowedDistance = Math.ceil(normalizedTarget.length * PARTIAL_MATCH_RATIO);
+  const targetChars = Array.from(normalizedTarget);
+  const distance = levenshtein(Array.from(normalizedGuess), targetChars);
+  const allowedDistance = Math.ceil(targetChars.length * PARTIAL_MATCH_RATIO);
 
   if (distance <= allowedDistance) {
     return GuessOutcome.PARTIAL;
