@@ -18,6 +18,15 @@ describe('classifyGuess', () => {
   it('treats an empty guess as a miss', () => {
     expect(classifyGuess('', 'Thrift Shop')).toBe(GuessOutcome.MISS);
   });
+
+  it('matches titles written in non-Latin scripts and emoji', () => {
+    expect(classifyGuess('Гори', 'Гори')).toBe(GuessOutcome.CORRECT);
+    expect(classifyGuess('夜に駆ける', '夜に駆ける')).toBe(GuessOutcome.CORRECT);
+    expect(classifyGuess('حبيبي', 'حبيبي')).toBe(GuessOutcome.CORRECT);
+    expect(classifyGuess('🔥🎶', '🔥🎶')).toBe(GuessOutcome.CORRECT);
+    expect(classifyGuess('Beyonce', 'Beyoncé')).toBe(GuessOutcome.CORRECT);
+    expect(classifyGuess('吉野家', '𠮷野家')).toBe(GuessOutcome.PARTIAL);
+  });
 });
 
 describe('scoreGuess', () => {
