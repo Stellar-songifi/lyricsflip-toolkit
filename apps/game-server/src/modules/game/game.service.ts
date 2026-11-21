@@ -29,6 +29,12 @@ export interface GuessResult {
   sessionStatus: GameSessionStatus;
   /** Rounds this session runs for; `currentRound` reaches it on the last guess. */
   totalRounds: number;
+  /**
+   * True when this player has answered the current round but the round has
+   * not advanced yet because other players in the session are still to
+   * answer (head-to-head and rooms). Solo sessions never set this.
+   */
+  waitingForOpponent: boolean;
 }
 
 /** Emitted once, by the server, when a session's last round is scored. */
@@ -102,6 +108,7 @@ export class GameService {
       scores: { [hostUserId]: 0 },
       currentStreak: {},
       seenLyricIds: [lyric.id],
+      roundAnswers: {},
     });
     return this.sessionsRepository.save(session);
   }
@@ -166,6 +173,11 @@ export class GameService {
    * can no longer both read the same row and race to `save()` (issue #27).
    * Only the lyric lookup and the session write happen inside the lock;
    * `awardXp` and the emitted events happen after commit.
+   *
+   * In head-to-head and room sessions every player answers the same card:
+   * the round only advances once all players have answered (issue #26). A
+   * player who has already answered the current round is rejected with
+   * `400 Already answered` until the round advances.
    */
   async submitGuess(sessionId: string, userId: string, guessText: string): Promise<GuessResult> {
     const locked = await this.sessionsRepository.manager.transaction(async (manager) => {
@@ -186,6 +198,13 @@ export class GameService {
         throw new BadRequestException('Player is not part of this session');
       }
 
+      const roundAnswers = session.roundAnswers ?? {};
+      const roundKey = String(session.currentRound);
+      const answersThisRound = roundAnswers[roundKey] ?? {};
+      if (answersThisRound[userId]) {
+        throw new BadRequestException('Already answered');
+      }
+
       const lyric = await this.lyricsService.findById(session.currentLyricId);
       const streak = session.currentStreak[userId] ?? 0;
 
@@ -204,79 +223,91 @@ export class GameService {
 
       session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
 
+      // Record this player's answer for the current round. The round only
+      // advances once every player in the session has answered.
+      answersThisRound[userId] = { outcome: finalOutcome, points: finalPoints };
+      roundAnswers[roundKey] = answersThisRound;
+      session.roundAnswers = roundAnswers;
+
+      const allAnswered = session.playerIds.every((id) => Boolean(answersThisRound[id]));
+
       let nextLyric: PublicLyric | null = null;
       let justFinished = false;
-      if (session.currentRound >= session.totalRounds) {
-        // A conditional update, not an unconditional save(): the emitted
-        // finish event (and the settlement it triggers) must fire from the
-        // transition that actually closed the session, not from every
-        // request that merely observed it as finished (issue #28).
-        const result = await manager.update(
-          GameSession,
-          { id: sessionId, status: GameSessionStatus.ACTIVE },
-          {
-            status: GameSessionStatus.FINISHED,
-            currentLyricId: null,
-            scores: session.scores,
-            currentStreak: session.currentStreak,
-          },
-        );
-        if (!result.affected) {
-          // Unreachable while the pessimistic lock holds for the whole
-          // transaction, but kept as a safety net against a future change
-          // that finishes a session outside this lock.
-          throw new ConflictException('Session was already finished');
-        }
-        session.status = GameSessionStatus.FINISHED;
-        session.currentLyricId = null;
+      let waitingForOpponent = false;
+      if (!allAnswered) {
+        // Other players still owe an answer for this card; keep the round
+        // where it is and let this player wait.
+        waitingForOpponent = true;
+      } else if (session.currentRound >= session.totalRounds) {
+        // A conditional update, not an unconditional save()
         justFinished = true;
       } else {
+        // Advance to the next round with a fresh card.
         const next = await this.lyricsService.getRandom(session.seenLyricIds);
-        session.seenLyricIds = [...session.seenLyricIds, next.id];
-        session.currentLyricId = next.id;
         session.currentRound += 1;
+        session.currentLyricId = next.id;
+        session.seenLyricIds = [...session.seenLyricIds, next.id];
         nextLyric = toPublicLyric(next);
-        await manager.save(GameSession, session);
       }
 
-      return { session, finalOutcome, finalPoints, nextLyric, justFinished };
+      await manager.save(session);
+
+      return {
+        session,
+        userId,
+        finalOutcome,
+        finalPoints,
+        nextLyric,
+        justFinished,
+        waitingForOpponent,
+      };
     });
 
-    const { session, finalOutcome, finalPoints, nextLyric, justFinished } = locked;
+    const {
+      session,
+      userId: scoredUserId,
+      finalOutcome,
+      finalPoints,
+      nextLyric,
+      justFinished,
+      waitingForOpponent,
+    } = locked;
 
-    await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
-
-    if (justFinished) {
-      // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener. Built from the row just
-      // committed, not from in-memory state a later guess may have changed.
-      const finished: SessionFinishedEvent = {
-        sessionId,
-        mode: session.mode,
-        playerIds: [...session.playerIds],
-        scores: { ...session.scores },
-      };
-      this.eventEmitter.emit('game.session.finished', finished);
+    if (finalOutcome === GuessOutcome.CORRECT) {
+      await this.usersService.awardXp(scoredUserId, finalPoints);
     }
 
-    this.eventEmitter.emit('guess.submitted', {
-      sessionId,
-      userId,
-      outcome: finalOutcome,
-      points: finalPoints,
-    });
+    if (justFinished) {
+      await this.sessionsRepository.update(
+        { id: session.id, status: GameSessionStatus.ACTIVE },
+        { status: GameSessionStatus.FINISHED },
+      );
+      session.status = GameSessionStatus.FINISHED;
+      this.eventEmitter.emit('game.session.finished', {
+        sessionId: session.id,
+        mode: session.mode,
+        playerIds: session.playerIds,
+        scores: session.scores,
+      } satisfies SessionFinishedEvent);
+    }
 
     return {
       outcome: finalOutcome,
       pointsAwarded: finalPoints,
-      streak: session.currentStreak[userId] ?? 0,
+      streak: session.currentStreak[scoredUserId] ?? 0,
       nextLyric,
       sessionStatus: session.status,
       totalRounds: session.totalRounds,
+      waitingForOpponent,
     };
   }
 }
 
 function toPublicLyric(lyric: { id: string; snippet: string; genre: string; decade: number }): PublicLyric {
-  return { id: lyric.id, snippet: lyric.snippet, genre: lyric.genre, decade: lyric.decade };
+  return {
+    id: lyric.id,
+    snippet: lyric.snippet,
+    genre: lyric.genre,
+    decade: lyric.decade,
+  };
 }
