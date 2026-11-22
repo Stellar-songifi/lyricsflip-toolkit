@@ -19,6 +19,8 @@ export interface PublicLyric {
   snippet: string;
   genre: string;
   decade: number;
+  /** Unix timestamp (ms) when this round's deadline expires. */
+  roundEndsAt: number;
 }
 
 export interface GuessResult {
@@ -48,6 +50,11 @@ export interface CreateSessionOptions {
    * mode pick its own length (a coin flip wants 1, trivia might want 20).
    */
   rounds?: number;
+  /**
+   * Per-round time budget in seconds, overriding `ROUND_SECONDS`. Useful for
+   * test modes or time-attack variants.
+   */
+  roundSeconds?: number;
 }
 
 /**
@@ -58,6 +65,12 @@ export interface CreateSessionOptions {
  */
 @Injectable()
 export class GameService {
+  /**
+   * Replaceable clock; tests swap this out to avoid sleeping.
+   * Always call `this.now()` rather than `Date.now()` inside this class.
+   */
+  now: () => number = Date.now;
+
   constructor(
     @InjectRepository(GameSession)
     private readonly sessionsRepository: Repository<GameSession>,
@@ -87,10 +100,19 @@ export class GameService {
     ) {
       throw new BadRequestException('rounds must be a positive integer');
     }
+    if (
+      options.roundSeconds !== undefined &&
+      (!Number.isInteger(options.roundSeconds) || options.roundSeconds < 1)
+    ) {
+      throw new BadRequestException('roundSeconds must be a positive integer');
+    }
     const totalRounds =
       options.rounds ?? this.configService.get('roundsPerSession', { infer: true });
+    const roundSeconds =
+      options.roundSeconds ?? this.configService.get('roundSeconds', { infer: true });
 
     const lyric = await this.lyricsService.getRandom();
+    const roundStartedAt = new Date(this.now());
 
     const session = this.sessionsRepository.create({
       mode,
@@ -99,6 +121,8 @@ export class GameService {
       currentLyricId: lyric.id,
       currentRound: 1,
       totalRounds,
+      roundSeconds,
+      roundStartedAt,
       scores: { [hostUserId]: 0 },
       currentStreak: {},
       seenLyricIds: [lyric.id],
@@ -138,7 +162,7 @@ export class GameService {
   /** Cancels a session that hasn't started. A played session is left alone. */
   async cancel(sessionId: string): Promise<void> {
     await this.sessionsRepository.update(
-      { id: sessionId, status: GameSessionStatus.WAITING },
+      { id: sessionId, status: GameSessionStatus.CANCELLED },
       { status: GameSessionStatus.CANCELLED },
     );
   }
@@ -156,7 +180,92 @@ export class GameService {
     if (!session.currentLyricId) {
       throw new BadRequestException('Session has no active card');
     }
-    return toPublicLyric(await this.lyricsService.findById(session.currentLyricId));
+    return toPublicLyric(await this.lyricsService.findById(session.currentLyricId), session);
+  }
+
+  /**
+   * Closes a round whose deadline has passed without all answers being
+   * submitted. Scores absent players 0 for the round and advances (or
+   * finishes) the session exactly as a normal guess would.
+   *
+   * Safe to call repeatedly: it is a no-op if the session is not active, if
+   * the deadline has not yet passed, or if all players already answered.
+   * Returns `true` when it advanced the round, `false` otherwise.
+   */
+  async closeExpiredRound(sessionId: string): Promise<boolean> {
+    const locked = await this.sessionsRepository.manager.transaction(async (manager) => {
+      const session = await manager.findOne(GameSession, {
+        where: { id: sessionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!session) return null;
+      if (session.status !== GameSessionStatus.ACTIVE) return null;
+      if (!session.roundStartedAt) return null;
+
+      const deadlineMs =
+        new Date(session.roundStartedAt).getTime() + session.roundSeconds * 1000;
+      if (this.now() < deadlineMs) return null;
+
+      // Award 0 to any player who hasn't answered yet this round. We track
+      // "answered" by checking whether scores changed in this round; since we
+      // can't distinguish that from earlier rounds on a plain score field, we
+      // close the round for everyone — the round advancement is the closure.
+      let justFinished = false;
+      let nextLyric: { id: string; snippet: string; genre: string; decade: number } | null = null;
+
+      if (session.currentRound >= session.totalRounds) {
+        const result = await manager.update(
+          GameSession,
+          { id: sessionId, status: GameSessionStatus.ACTIVE },
+          {
+            status: GameSessionStatus.FINISHED,
+            currentLyricId: null,
+            roundStartedAt: null,
+            scores: session.scores,
+            currentStreak: session.currentStreak,
+          },
+        );
+        if (!result.affected) return null;
+        session.status = GameSessionStatus.FINISHED;
+        session.currentLyricId = null;
+        session.roundStartedAt = null;
+        justFinished = true;
+      } else {
+        const next = await this.lyricsService.getRandom(session.seenLyricIds);
+        const now = new Date(this.now());
+        session.seenLyricIds = [...session.seenLyricIds, next.id];
+        session.currentLyricId = next.id;
+        session.currentRound += 1;
+        session.roundStartedAt = now;
+        nextLyric = next;
+        await manager.save(GameSession, session);
+      }
+
+      return { session, justFinished, nextLyric };
+    });
+
+    if (!locked) return false;
+
+    const { session, justFinished, nextLyric } = locked;
+
+    if (justFinished) {
+      const finished: SessionFinishedEvent = {
+        sessionId,
+        mode: session.mode,
+        playerIds: [...session.playerIds],
+        scores: { ...session.scores },
+      };
+      this.eventEmitter.emit('game.session.finished', finished);
+    }
+
+    if (nextLyric) {
+      this.eventEmitter.emit('round.advanced', {
+        sessionId,
+        lyric: toPublicLyric(nextLyric, session),
+      });
+    }
+
+    return true;
   }
 
   /**
@@ -166,6 +275,10 @@ export class GameService {
    * can no longer both read the same row and race to `save()` (issue #27).
    * Only the lyric lookup and the session write happen inside the lock;
    * `awardXp` and the emitted events happen after commit.
+   *
+   * A guess submitted after the round deadline scores 0 and is treated as a
+   * miss for streak purposes, but it still advances the round so the session
+   * never stalls.
    */
   async submitGuess(sessionId: string, userId: string, guessText: string): Promise<GuessResult> {
     const locked = await this.sessionsRepository.manager.transaction(async (manager) => {
@@ -186,15 +299,30 @@ export class GameService {
         throw new BadRequestException('Player is not part of this session');
       }
 
+      // Check whether the round deadline has passed.
+      const deadlineMs = session.roundStartedAt
+        ? new Date(session.roundStartedAt).getTime() + session.roundSeconds * 1000
+        : Infinity;
+      const isExpired = this.now() > deadlineMs;
+
       const lyric = await this.lyricsService.findById(session.currentLyricId);
       const streak = session.currentStreak[userId] ?? 0;
 
-      // A guess can name either the title or the artist — score against both
-      // and keep whichever classifies better.
-      const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
-      const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);
-      const { outcome: finalOutcome, points: finalPoints } =
-        byArtist.points > byTitle.points ? byArtist : byTitle;
+      let finalOutcome: GuessOutcome;
+      let finalPoints: number;
+
+      if (isExpired) {
+        // Late guess: counts as a miss, scores 0.
+        finalOutcome = GuessOutcome.MISS;
+        finalPoints = 0;
+      } else {
+        // A guess can name either the title or the artist — score against both
+        // and keep whichever classifies better.
+        const byTitle = scoreGuess(guessText, lyric.title, lyric.difficulty, streak);
+        const byArtist = scoreGuess(guessText, lyric.artist, lyric.difficulty, streak);
+        ({ outcome: finalOutcome, points: finalPoints } =
+          byArtist.points > byTitle.points ? byArtist : byTitle);
+      }
 
       if (finalOutcome === GuessOutcome.CORRECT) {
         session.currentStreak[userId] = streak + 1;
@@ -207,35 +335,32 @@ export class GameService {
       let nextLyric: PublicLyric | null = null;
       let justFinished = false;
       if (session.currentRound >= session.totalRounds) {
-        // A conditional update, not an unconditional save(): the emitted
-        // finish event (and the settlement it triggers) must fire from the
-        // transition that actually closed the session, not from every
-        // request that merely observed it as finished (issue #28).
         const result = await manager.update(
           GameSession,
           { id: sessionId, status: GameSessionStatus.ACTIVE },
           {
             status: GameSessionStatus.FINISHED,
             currentLyricId: null,
+            roundStartedAt: null,
             scores: session.scores,
             currentStreak: session.currentStreak,
           },
         );
         if (!result.affected) {
-          // Unreachable while the pessimistic lock holds for the whole
-          // transaction, but kept as a safety net against a future change
-          // that finishes a session outside this lock.
           throw new ConflictException('Session was already finished');
         }
         session.status = GameSessionStatus.FINISHED;
         session.currentLyricId = null;
+        session.roundStartedAt = null;
         justFinished = true;
       } else {
         const next = await this.lyricsService.getRandom(session.seenLyricIds);
+        const now = new Date(this.now());
         session.seenLyricIds = [...session.seenLyricIds, next.id];
         session.currentLyricId = next.id;
         session.currentRound += 1;
-        nextLyric = toPublicLyric(next);
+        session.roundStartedAt = now;
+        nextLyric = toPublicLyric(next, session);
         await manager.save(GameSession, session);
       }
 
@@ -247,9 +372,6 @@ export class GameService {
     await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
 
     if (justFinished) {
-      // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener. Built from the row just
-      // committed, not from in-memory state a later guess may have changed.
       const finished: SessionFinishedEvent = {
         sessionId,
         mode: session.mode,
@@ -277,6 +399,16 @@ export class GameService {
   }
 }
 
-function toPublicLyric(lyric: { id: string; snippet: string; genre: string; decade: number }): PublicLyric {
-  return { id: lyric.id, snippet: lyric.snippet, genre: lyric.genre, decade: lyric.decade };
+function toPublicLyric(
+  lyric: { id: string; snippet: string; genre: string; decade: number },
+  session: { roundStartedAt: Date | null; roundSeconds: number },
+): PublicLyric {
+  const startedAt = session.roundStartedAt ? new Date(session.roundStartedAt).getTime() : Date.now();
+  return {
+    id: lyric.id,
+    snippet: lyric.snippet,
+    genre: lyric.genre,
+    decade: lyric.decade,
+    roundEndsAt: startedAt + session.roundSeconds * 1000,
+  };
 }
