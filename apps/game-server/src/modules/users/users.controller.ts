@@ -1,10 +1,23 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  ClassSerializerInterceptor,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Query,
+  SerializeOptions,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { IsString, Matches } from 'class-validator';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUserId } from '../auth/decorators/current-user.decorator';
 import { LEVEL_THRESHOLDS } from './entities/user.entity';
+import { PublicUserDto } from './dto/public-user.dto';
 
 class UpdateMeDto {
   @IsString()
@@ -18,6 +31,9 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get('leaderboard')
+  @ApiOkResponse({ type: [PublicUserDto] })
+  @UseInterceptors(ClassSerializerInterceptor)
+  @SerializeOptions({ type: PublicUserDto })
   getLeaderboard(@Query('limit') limit?: string) {
     const parsed = limit ? parseInt(limit, 10) : undefined;
     return this.usersService.getLeaderboard(parsed);
@@ -41,6 +57,9 @@ export class UsersController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: PublicUserDto })
+  @UseInterceptors(ClassSerializerInterceptor)
+  @SerializeOptions({ type: PublicUserDto })
   getById(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.findById(id);
   }
