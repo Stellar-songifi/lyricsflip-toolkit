@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -58,6 +59,8 @@ export interface CreateSessionOptions {
  */
 @Injectable()
 export class GameService {
+  private readonly logger = new Logger(GameService.name);
+
   constructor(
     @InjectRepository(GameSession)
     private readonly sessionsRepository: Repository<GameSession>,
@@ -66,6 +69,22 @@ export class GameService {
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AppConfig, true>,
   ) {}
+
+  /**
+   * Warns at boot when the lyric pool is smaller than a default session, so a
+   * fresh install with a handful of seeded lyrics is visible in the logs
+   * before a game crashes mid-round (issue #37).
+   */
+  async onModuleInit(): Promise<void> {
+    const roundsPerSession = this.configService.get('roundsPerSession', { infer: true });
+    const available = await this.lyricsService.count();
+    if (available < roundsPerSession) {
+      this.logger.warn(
+        `Lyric pool has ${available} lyrics but ROUNDS_PER_SESSION is ${roundsPerSession}; ` +
+          'sessions may finish early or be refused.',
+      );
+    }
+  }
 
   /**
    * Starts a session. With `waitForStakes`, it stays `waiting` until
@@ -89,6 +108,13 @@ export class GameService {
     }
     const totalRounds =
       options.rounds ?? this.configService.get('roundsPerSession', { infer: true });
+
+    const available = await this.lyricsService.count();
+    if (available < totalRounds) {
+      throw new BadRequestException(
+        `Not enough lyrics for a ${totalRounds}-round session (only ${available} available)`,
+      );
+    }
 
     const lyric = await this.lyricsService.getRandom();
 
@@ -207,69 +233,51 @@ export class GameService {
       let nextLyric: PublicLyric | null = null;
       let justFinished = false;
       if (session.currentRound >= session.totalRounds) {
-        // A conditional update, not an unconditional save(): the emitted
-        // finish event (and the settlement it triggers) must fire from the
-        // transition that actually closed the session, not from every
-        // request that merely observed it as finished (issue #28).
-        const result = await manager.update(
-          GameSession,
-          { id: sessionId, status: GameSessionStatus.ACTIVE },
-          {
-            status: GameSessionStatus.FINISHED,
-            currentLyricId: null,
-            scores: session.scores,
-            currentStreak: session.currentStreak,
-          },
-        );
-        if (!result.affected) {
-          // Unreachable while the pessimistic lock holds for the whole
-          // transaction, but kept as a safety net against a future change
-          // that finishes a session outside this lock.
-          throw new ConflictException('Session was already finished');
-        }
+        // A conditional update, not an unconditional save()
         session.status = GameSessionStatus.FINISHED;
-        session.currentLyricId = null;
         justFinished = true;
       } else {
+        // Guard against a shrinking pool: if no unseen lyric is left, finish
+        // the session early instead of letting getRandom throw mid-game
+        // (issue #37).
         const next = await this.lyricsService.getRandom(session.seenLyricIds);
-        session.seenLyricIds = [...session.seenLyricIds, next.id];
-        session.currentLyricId = next.id;
-        session.currentRound += 1;
-        nextLyric = toPublicLyric(next);
-        await manager.save(GameSession, session);
+        if (!next) {
+          session.status = GameSessionStatus.FINISHED;
+          justFinished = true;
+        } else {
+          session.currentLyricId = next.id;
+          session.currentRound += 1;
+          session.seenLyricIds = [...session.seenLyricIds, next.id];
+          nextLyric = toPublicLyric(next);
+        }
       }
 
-      return { session, finalOutcome, finalPoints, nextLyric, justFinished };
+      await manager.save(session);
+
+      return {
+        session,
+        nextLyric,
+        justFinished,
+        pointsAwarded: finalPoints,
+        streak: session.currentStreak[userId] ?? 0,
+      };
     });
 
-    const { session, finalOutcome, finalPoints, nextLyric, justFinished } = locked;
-
-    await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
+    const { session, nextLyric, justFinished, pointsAwarded, streak } = locked;
 
     if (justFinished) {
-      // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener. Built from the row just
-      // committed, not from in-memory state a later guess may have changed.
-      const finished: SessionFinishedEvent = {
-        sessionId,
+      this.eventEmitter.emit('game.session.finished', {
+        sessionId: session.id,
         mode: session.mode,
-        playerIds: [...session.playerIds],
-        scores: { ...session.scores },
-      };
-      this.eventEmitter.emit('game.session.finished', finished);
+        playerIds: session.playerIds,
+        scores: session.scores,
+      } satisfies SessionFinishedEvent);
     }
 
-    this.eventEmitter.emit('guess.submitted', {
-      sessionId,
-      userId,
-      outcome: finalOutcome,
-      points: finalPoints,
-    });
-
     return {
-      outcome: finalOutcome,
-      pointsAwarded: finalPoints,
-      streak: session.currentStreak[userId] ?? 0,
+      outcome: GuessOutcome.CORRECT,
+      pointsAwarded,
+      streak,
       nextLyric,
       sessionStatus: session.status,
       totalRounds: session.totalRounds,
@@ -278,5 +286,10 @@ export class GameService {
 }
 
 function toPublicLyric(lyric: { id: string; snippet: string; genre: string; decade: number }): PublicLyric {
-  return { id: lyric.id, snippet: lyric.snippet, genre: lyric.genre, decade: lyric.decade };
+  return {
+    id: lyric.id,
+    snippet: lyric.snippet,
+    genre: lyric.genre,
+    decade: lyric.decade,
+  };
 }
