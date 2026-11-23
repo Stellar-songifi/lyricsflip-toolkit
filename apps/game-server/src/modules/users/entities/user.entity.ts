@@ -18,6 +18,12 @@ export const LEVEL_THRESHOLDS: { level: PlayerLevel; minXp: number }[] = [
   { level: PlayerLevel.GOSSIP_GURU, minXp: 7500 },
 ];
 
+export enum UserRole {
+  PLAYER = 'player',
+  OPERATOR = 'operator',
+  ADMIN = 'admin',
+}
+
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
@@ -46,6 +52,9 @@ export class User {
 
   @Column({ type: 'enum', enum: PlayerLevel, default: PlayerLevel.GOSSIP_ROOKIE })
   level: PlayerLevel;
+
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.PLAYER })
+  role: UserRole;
 
   @Exclude()
   @Column({ type: 'timestamp', nullable: true })
