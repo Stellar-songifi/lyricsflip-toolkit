@@ -220,15 +220,31 @@ export class WagerService {
       throw new BadRequestException(`Only a staked wager can be settled (status: ${wager.status})`);
     }
 
-    const claimed = await this.transition(wager.id, WagerStatus.STAKED, {
-      status: WagerStatus.SETTLING,
-      settlementKind: kind,
-      winnerId,
-    });
-    if (!claimed) {
-      return this.settle(wagerId, result); // lost a race; re-read and re-check
+    // Bounded retry: a lost conditional update means another request moved the
+    // wager. Re-read and re-check a few times, then give up rather than recurse.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const claimed = await this.transition(wager.id, WagerStatus.STAKED, {
+        status: WagerStatus.SETTLING,
+        settlementKind: kind,
+        winnerId,
+      });
+      if (claimed) {
+        return this.submitSettlement(await this.findById(wager.id));
+      }
+      const current = await this.findById(wager.id);
+      if (current.settlementKind) {
+        if (current.settlementKind === kind && current.winnerId === winnerId) {
+          return current; // already settling or settled this way
+        }
+        throw new ConflictException('This wager is already being settled differently');
+      }
+      if (current.status !== WagerStatus.STAKED) {
+        throw new BadRequestException(
+          `Only a staked wager can be settled (status: ${current.status})`,
+        );
+      }
     }
-    return this.submitSettlement(await this.findById(wager.id));
+    throw new ConflictException('Could not claim this wager for settlement; try again');
   }
 
   /** `settle`, looked up by the game's match id. */
@@ -316,17 +332,32 @@ export class WagerService {
     });
   }
 
-  /** Wagers the background sweep should look at. */
-  async findNeedingAttention(olderThan: Date, limit = 100): Promise<Wager[]> {
+  /**
+   * Wagers the background sweep should look at: those whose `nextAttemptAt`
+   * has passed (or was never set), oldest due first.
+   */
+  async findNeedingAttention(now: Date, limit = 100): Promise<Wager[]> {
     return this.wagers
       .createQueryBuilder('w')
       .where('w.status IN (:...statuses)', {
         statuses: [WagerStatus.PENDING, WagerStatus.AWAITING_STAKES, WagerStatus.SETTLING],
       })
-      .andWhere('w.updatedAt < :olderThan', { olderThan })
-      .orderBy('w.updatedAt', 'ASC')
+      .andWhere('(w.nextAttemptAt IS NULL OR w.nextAttemptAt <= :now)', { now })
+      .orderBy('w.nextAttemptAt', 'ASC', 'NULLS FIRST')
+      .addOrderBy('w.updatedAt', 'ASC')
       .take(limit)
       .getMany();
+  }
+
+  /** How many wagers are currently waiting for the reconciler. */
+  async countNeedingAttention(now: Date): Promise<number> {
+    return this.wagers
+      .createQueryBuilder('w')
+      .where('w.status IN (:...statuses)', {
+        statuses: [WagerStatus.PENDING, WagerStatus.AWAITING_STAKES, WagerStatus.SETTLING],
+      })
+      .andWhere('(w.nextAttemptAt IS NULL OR w.nextAttemptAt <= :now)', { now })
+      .getCount();
   }
 
   // --- internals ------------------------------------------------------------
@@ -416,12 +447,20 @@ export class WagerService {
     }
     if (outcome.status === 'failed') {
       this.logger.warn(`Wager ${wager.id} settlement failed (${outcome.error}); checking the pot`);
+      // The pot says what really happened; a retry is left to the next sweep.
+      return this.reconcileSettlement(await this.findById(wager.id));
     }
-    // Confirmed or failed: the pot says what really happened.
-    return this.reconcileSettlement(await this.findById(wager.id), outcome.status === 'failed');
+    // Confirmed: trust it for the immediate response. The wager stays
+    // `settling` and the background sweep confirms it against the pot, so a
+    // lagging RPC node can't trigger a resubmission here.
+    return this.findById(wager.id);
   }
 
-  private async reconcileSettlement(wager: Wager, justFailed = false): Promise<Wager> {
+  /**
+   * Reconciles a `settling` wager against the pot. Called from the background
+   * sweep only; never resubmits recursively within the same call.
+   */
+  private async reconcileSettlement(wager: Wager): Promise<Wager> {
     const pot = await this.escrow.getPot(wager.id);
     const payout = wager.settlementKind === SettlementKind.PAYOUT;
 
@@ -449,6 +488,19 @@ export class WagerService {
       );
     }
 
+    // The intended call hasn't landed. Before resubmitting, check whether the
+    // previous submission actually made it on-chain: if it did, the pot is
+    // simply lagging, so wait for it instead of paying fees for a duplicate.
+    if (wager.settlementTxHash) {
+      const lookup = await this.escrow.lookup(wager.settlementTxHash);
+      if (lookup.status === 'succeeded') {
+        this.logger.log(
+          `Wager ${wager.id}: settlement ${wager.settlementTxHash} already landed; waiting for the pot`,
+        );
+        return this.recordAttempt(wager);
+      }
+    }
+
     // The intended call hasn't landed. Retry it: the contract refuses a
     // second payout, so a retry can never pay twice.
     const attempts = wager.reconcileAttempts + 1;
@@ -456,11 +508,31 @@ export class WagerService {
     if (attempts >= max) {
       return this.fail(wager, `Settlement did not land after ${attempts} attempts`);
     }
-    await this.wagers.update({ id: wager.id, status: WagerStatus.SETTLING }, { reconcileAttempts: attempts });
-    if (justFailed) {
-      return this.findById(wager.id); // leave the retry to the next sweep
-    }
-    return this.submitSettlement(await this.findById(wager.id));
+    const recorded = await this.recordAttempt(wager, attempts);
+    if (recorded.status !== WagerStatus.SETTLING) return recorded;
+    return this.submitSettlement(recorded);
+  }
+
+  /**
+   * Records one reconcile attempt and schedules the next one with exponential
+   * backoff and jitter. `reconcileAttempts` grows at most once per call.
+   */
+  private async recordAttempt(wager: Wager, attempts = wager.reconcileAttempts + 1): Promise<Wager> {
+    const nextAttemptAt = this.nextAttemptAt(attempts);
+    await this.wagers.update(
+      { id: wager.id, status: WagerStatus.SETTLING },
+      { reconcileAttempts: attempts, nextAttemptAt },
+    );
+    return this.findById(wager.id);
+  }
+
+  /** Exponential backoff with jitter, based on the attempt count. */
+  private nextAttemptAt(attempts: number): Date {
+    const baseMs = this.options.reconcile?.baseDelayMs ?? DEFAULTS.reconcileBaseDelayMs;
+    const maxMs = this.options.reconcile?.maxDelayMs ?? DEFAULTS.reconcileMaxDelayMs;
+    const exponential = Math.min(maxMs, baseMs * 2 ** Math.max(0, attempts - 1));
+    const jitter = Math.random() * exponential * 0.5;
+    return new Date(Date.now() + exponential + jitter);
   }
 
   private async finish(wager: Wager, status: WagerStatus.WON | WagerStatus.REFUNDED): Promise<Wager> {
