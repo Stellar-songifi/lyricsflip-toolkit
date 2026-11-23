@@ -1,5 +1,6 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { IsString } from 'class-validator';
 import { AuthService } from './auth.service';
 
@@ -17,16 +18,19 @@ class VerifyDto {
 }
 
 @ApiTags('auth')
+@UseGuards(ThrottlerGuard)
 @Controller('auth/stellar')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('challenge')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   getChallenge(@Body() dto: ChallengeDto) {
     return this.authService.getChallenge(dto.walletAddress);
   }
 
   @Post('verify')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verify(@Body() dto: VerifyDto) {
     return this.authService.verify(dto.walletAddress, dto.signedTransactionXdr);
   }
