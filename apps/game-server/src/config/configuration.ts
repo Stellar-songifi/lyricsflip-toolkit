@@ -11,6 +11,11 @@ export interface AppConfig {
   roundsPerSession: number;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string | null;
+  /**
+   * Whether the Swagger UI at `/api/docs` is served. `SWAGGER_ENABLED`,
+   * default `true` outside production and `false` in production.
+   */
+  swaggerEnabled: boolean;
   jwt: {
     secret: string;
     expiresIn: string;
@@ -94,6 +99,11 @@ export default (): AppConfig => {
     throw new Error('CORS_ORIGIN must be explicitly set to a specific origin in production mode');
   }
 
+  // Publishing the full API surface is a deliberate choice, so Swagger is off
+  // by default in production and on everywhere else.
+  const swaggerEnabled =
+    (process.env.SWAGGER_ENABLED ?? (nodeEnv === 'production' ? 'false' : 'true')) === 'true';
+
   const hasReplica = Boolean(process.env.DB_REPLICA_HOST);
 
   const rawRounds = process.env.ROUNDS_PER_SESSION ?? '10';
@@ -118,6 +128,7 @@ export default (): AppConfig => {
     nodeEnv,
     roundsPerSession,
     corsOrigin,
+    swaggerEnabled,
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
