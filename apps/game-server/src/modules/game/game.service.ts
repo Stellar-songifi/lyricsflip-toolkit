@@ -247,14 +247,13 @@ export class GameService {
     await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
 
     if (justFinished) {
-      // The server, not a client, announces the end of a match; settlement
-      // listens for this. See SettlementListener. Built from the row just
-      // committed, not from in-memory state a later guess may have changed.
+      // Reload after commit so settlement uses the canonical finished scores.
+      const finishedSession = await this.getSession(sessionId);
       const finished: SessionFinishedEvent = {
         sessionId,
-        mode: session.mode,
-        playerIds: [...session.playerIds],
-        scores: { ...session.scores },
+        mode: finishedSession.mode,
+        playerIds: [...finishedSession.playerIds],
+        scores: { ...finishedSession.scores },
       };
       this.eventEmitter.emit('game.session.finished', finished);
     }
