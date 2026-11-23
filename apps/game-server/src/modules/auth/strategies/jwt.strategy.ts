@@ -7,6 +7,7 @@ import { AppConfig } from '../../../config/configuration';
 export interface JwtPayload {
   sub: string;
   walletAddress: string;
+  exp?: number;
 }
 
 @Injectable()
@@ -20,6 +21,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload) {
-    return { userId: payload.sub, walletAddress: payload.walletAddress };
+    return { userId: payload.sub, walletAddress: payload.walletAddress, exp: payload.exp };
   }
 }

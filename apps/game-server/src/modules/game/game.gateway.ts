@@ -1,6 +1,7 @@
-import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
+  ArgumentsHost,
   ConnectedSocket,
   MessageBody,
   OnGatewayConnection,
@@ -9,6 +10,7 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
+import { BaseWsExceptionFilter } from '@nestjs/websockets';
 import { IsString, IsUUID, MaxLength } from 'class-validator';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
@@ -28,10 +30,19 @@ class SubmitGuessPayload {
   guess: string;
 }
 
+class AuthPayload {
+  @IsString()
+  token: string;
+}
+
 /**
  * Real-time play. Every connection must present the game's JWT (as
  * `auth.token` in the Socket.IO handshake, or a bearer header); the player
  * is always the token's subject, never a field in a message.
+ *
+ * The token's `exp` is stored on the socket and re-checked on every message,
+ * so a long-lived socket cannot outlive its JWT. A client can re-authenticate
+ * over an existing socket by sending an `auth` message with a fresh token.
  *
  * The session payloads mirror the HTTP ones and include `totalRounds`, the
  * round the session finishes at. `guessResult` carries it too, and
@@ -55,13 +66,27 @@ export class GameGateway implements OnGatewayConnection {
   ) {}
 
   handleConnection(client: Socket): void {
-    const userId = this.authenticate(client);
-    if (!userId) {
+    const auth = this.authenticate(client);
+    if (!auth) {
       client.emit('error', { message: 'Unauthorized' });
       client.disconnect(true);
       return;
     }
-    client.data.userId = userId;
+    client.data.userId = auth.userId;
+    client.data.exp = auth.exp;
+  }
+
+  @SubscribeMessage('auth')
+  handleAuth(@MessageBody() payload: AuthPayload, @ConnectedSocket() client: Socket) {
+    const auth = this.verifyToken(payload.token);
+    if (!auth) {
+      this.reject(client);
+      return { ok: false };
+    }
+    client.data.userId = auth.userId;
+    client.data.exp = auth.exp;
+    client.emit('authenticated', { userId: auth.userId });
+    return { ok: true };
   }
 
   @SubscribeMessage('requestLyric')
@@ -102,7 +127,7 @@ export class GameGateway implements OnGatewayConnection {
     return session;
   }
 
-  private authenticate(client: Socket): string | null {
+  private authenticate(client: Socket): { userId: string; exp: number } | null {
     const fromAuth = client.handshake.auth?.token;
     const header = client.handshake.headers?.authorization;
     const token =
@@ -112,8 +137,14 @@ export class GameGateway implements OnGatewayConnection {
           ? header.slice(7)
           : null;
     if (!token) return null;
+    return this.verifyToken(token);
+  }
+
+  private verifyToken(token: string): { userId: string; exp: number } | null {
     try {
-      return this.jwt.verify<JwtPayload>(token).sub;
+      const payload = this.jwt.verify<JwtPayload>(token);
+      if (!payload.sub || typeof payload.exp !== 'number') return null;
+      return { userId: payload.sub, exp: payload.exp };
     } catch {
       this.logger.debug('Rejected a socket with an invalid token');
       return null;
@@ -122,8 +153,21 @@ export class GameGateway implements OnGatewayConnection {
 
   private userId(client: Socket): string {
     const userId = client.data.userId as string | undefined;
-    if (!userId) throw new WsException('Unauthorized');
+    const exp = client.data.exp as number | undefined;
+    if (!userId || typeof exp !== 'number' || this.isExpired(exp)) {
+      this.reject(client);
+      throw new WsException('Unauthorized');
+    }
     return userId;
+  }
+
+  private isExpired(exp: number): boolean {
+    return exp * 1000 <= Date.now();
+  }
+
+  private reject(client: Socket): void {
+    client.emit('unauthorized', { message: 'Unauthorized' });
+    client.disconnect(true);
   }
 
   private async requireParticipant(sessionId: string, client: Socket): Promise<void> {
