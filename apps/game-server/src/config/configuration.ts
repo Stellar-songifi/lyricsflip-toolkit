@@ -11,6 +11,11 @@ export interface AppConfig {
   roundsPerSession: number;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string | null;
+  /**
+   * Express `trust proxy` setting. Behind a load balancer this must be set so
+   * rate limiting sees the real client IP. `TRUST_PROXY`, default `false`.
+   */
+  trustProxy: boolean | number | string;
   jwt: {
     secret: string;
     expiresIn: string;
@@ -72,6 +77,28 @@ function required(key: string): string {
   return value;
 }
 
+/**
+ * Parses `TRUST_PROXY` into an Express `trust proxy` value.
+ * Accepts `true`/`false`, a hop count (`1`), or a comma-separated list of
+ * trusted subnets/addresses (e.g. `loopback,10.0.0.0/8`).
+ */
+function parseTrustProxy(raw: string | undefined): boolean | number | string {
+  if (raw === undefined || raw === '') {
+    return false;
+  }
+  const trimmed = raw.trim();
+  if (trimmed === 'true') {
+    return true;
+  }
+  if (trimmed === 'false') {
+    return false;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return parseInt(trimmed, 10);
+  }
+  return trimmed;
+}
+
 export default (): AppConfig => {
   const settlementMode = (process.env.STELLAR_SETTLEMENT_MODE ?? 'mock') as SettlementMode;
   const custodyMode = (process.env.STELLAR_CUSTODY_MODE ?? 'non-custodial') as CustodyMode;
@@ -118,6 +145,7 @@ export default (): AppConfig => {
     nodeEnv,
     roundsPerSession,
     corsOrigin,
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     jwt: {
       secret: required('JWT_SECRET'),
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
