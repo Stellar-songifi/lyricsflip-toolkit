@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
   ConnectedSocket,
@@ -9,16 +9,22 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
+import { IsString, IsUUID, MaxLength } from 'class-validator';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 
-interface SessionPayload {
+class SessionPayload {
+  @IsUUID()
   sessionId: string;
 }
 
-interface SubmitGuessPayload {
+class SubmitGuessPayload {
+  @IsUUID()
   sessionId: string;
+
+  @IsString()
+  @MaxLength(200)
   guess: string;
 }
 
@@ -35,6 +41,8 @@ interface SubmitGuessPayload {
   namespace: '/game',
   cors: { origin: true, credentials: true },
 })
+@UsePipes(new ValidationPipe({ whitelist: true }))
+@UseFilters(new WsValidationExceptionFilter())
 export class GameGateway implements OnGatewayConnection {
   private readonly logger = new Logger(GameGateway.name);
 
@@ -123,5 +131,27 @@ export class GameGateway implements OnGatewayConnection {
     if (!session.playerIds.includes(this.userId(client))) {
       throw new WsException('You are not a player in this session');
     }
+  }
+}
+
+/**
+ * Turns `ValidationPipe` failures on socket payloads into a `WsException`
+ * with a readable message, so clients get a validation error instead of a
+ * generic exception (or a downstream database error).
+ */
+class WsValidationExceptionFilter extends BaseWsExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost): void {
+    if (exception instanceof BadRequestException) {
+      const response = exception.getResponse();
+      const message =
+        typeof response === 'string'
+          ? response
+          : Array.isArray((response as { message?: unknown }).message)
+            ? ((response as { message: string[] }).message).join('; ')
+            : ((response as { message?: string }).message ?? exception.message);
+      super.catch(new WsException(message), host);
+      return;
+    }
+    super.catch(exception, host);
   }
 }
