@@ -99,6 +99,21 @@ function parseTrustProxy(raw: string | undefined): boolean | number | string {
   return trimmed;
 }
 
+/**
+ * Parses `CORS_ORIGIN` into the list of allowed browser origins.
+ * Accepts a single origin or a comma-separated list. `*` is only honoured
+ * outside production (production refuses it below).
+ */
+function parseCorsOrigins(raw: string | null): string[] {
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+}
+
 export default (): AppConfig => {
   const settlementMode = (process.env.STELLAR_SETTLEMENT_MODE ?? 'mock') as SettlementMode;
   const custodyMode = (process.env.STELLAR_CUSTODY_MODE ?? 'non-custodial') as CustodyMode;
@@ -203,3 +218,5 @@ export default (): AppConfig => {
     },
   };
 };
+
+export { parseCorsOrigins };
