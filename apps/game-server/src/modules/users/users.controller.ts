@@ -12,7 +12,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
-import { IsString, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUserId } from '../auth/decorators/current-user.decorator';
@@ -25,6 +26,15 @@ class UpdateMeDto {
   username: string;
 }
 
+class LeaderboardQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit: number = 20;
+}
+
 @ApiTags('users')
 @Controller('users')
 export class UsersController {
@@ -34,9 +44,8 @@ export class UsersController {
   @ApiOkResponse({ type: [PublicUserDto] })
   @UseInterceptors(ClassSerializerInterceptor)
   @SerializeOptions({ type: PublicUserDto })
-  getLeaderboard(@Query('limit') limit?: string) {
-    const parsed = limit ? parseInt(limit, 10) : undefined;
-    return this.usersService.getLeaderboard(parsed);
+  getLeaderboard(@Query() query: LeaderboardQueryDto) {
+    return this.usersService.getLeaderboard(query.limit);
   }
 
   /** The signed-in player, with the XP needed for their next level. */
