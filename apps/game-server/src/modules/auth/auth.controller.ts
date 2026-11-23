@@ -16,6 +16,16 @@ class VerifyDto {
   signedTransactionXdr: string;
 }
 
+class RefreshDto {
+  @IsString()
+  refreshToken: string;
+}
+
+class LogoutDto {
+  @IsString()
+  refreshToken: string;
+}
+
 @ApiTags('auth')
 @Controller('auth/stellar')
 export class AuthController {
@@ -29,5 +39,15 @@ export class AuthController {
   @Post('verify')
   verify(@Body() dto: VerifyDto) {
     return this.authService.verify(dto.walletAddress, dto.signedTransactionXdr);
+  }
+
+  @Post('refresh')
+  refresh(@Body() dto: RefreshDto) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  @Post('logout')
+  logout(@Body() dto: LogoutDto) {
+    return this.authService.logout(dto.refreshToken);
   }
 }
