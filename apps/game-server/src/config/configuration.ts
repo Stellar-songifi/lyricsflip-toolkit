@@ -64,12 +64,42 @@ export interface AppConfig {
   };
 }
 
+/** Placeholder shipped in `.env.example`; never valid as a real secret. */
+const EXAMPLE_JWT_SECRET = 'change-me-in-production';
+/** Minimum secret length in bytes; shorter secrets are brute-forceable. */
+const MIN_JWT_SECRET_BYTES = 32;
+
 function required(key: string): string {
   const value = process.env[key];
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
   return value;
+}
+
+/**
+ * Rejects weak or default JWT secrets. In production a bad secret is fatal
+ * (a public secret lets anyone forge tokens for any user id); elsewhere it is
+ * only a warning so local development stays frictionless.
+ */
+function validateJwtSecret(secret: string, nodeEnv: string): void {
+  const problems: string[] = [];
+  if (secret === EXAMPLE_JWT_SECRET) {
+    problems.push('it is the .env.example placeholder value');
+  }
+  if (Buffer.byteLength(secret, 'utf8') < MIN_JWT_SECRET_BYTES) {
+    problems.push(`it is shorter than ${MIN_JWT_SECRET_BYTES} bytes`);
+  }
+  if (problems.length === 0) {
+    return;
+  }
+
+  const detail = `JWT_SECRET is weak: ${problems.join(' and ')}. Generate one with \`openssl rand -base64 48\`.`;
+  if (nodeEnv === 'production') {
+    throw new Error(detail);
+  }
+  // eslint-disable-next-line no-console
+  console.warn(`[config] ${detail}`);
 }
 
 export default (): AppConfig => {
@@ -93,6 +123,9 @@ export default (): AppConfig => {
   if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
     throw new Error('CORS_ORIGIN must be explicitly set to a specific origin in production mode');
   }
+
+  const jwtSecret = required('JWT_SECRET');
+  validateJwtSecret(jwtSecret, nodeEnv);
 
   const hasReplica = Boolean(process.env.DB_REPLICA_HOST);
 
@@ -119,7 +152,7 @@ export default (): AppConfig => {
     roundsPerSession,
     corsOrigin,
     jwt: {
-      secret: required('JWT_SECRET'),
+      secret: jwtSecret,
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
     },
     database: {
