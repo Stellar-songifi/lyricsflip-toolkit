@@ -68,6 +68,7 @@ export interface Wager {
   playerBStakedAt: string | null;
   winnerId: string | null;
   settlementTxHash: string | null;
+  expiresAt: string | null;
 }
 
 export interface DailyView {
@@ -196,6 +197,7 @@ export function createApi(
         ),
       stake: (id: string, signedTransactionXdr?: string) =>
         request<Wager>('POST', `/wagers/${id}/stake`, signedTransactionXdr ? { signedTransactionXdr } : {}),
+      cancel: (id: string) => request<Wager>('POST', `/wagers/${id}/cancel`),
     },
     faucet: {
       info: () =>
