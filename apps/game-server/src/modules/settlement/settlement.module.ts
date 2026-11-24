@@ -7,6 +7,7 @@ import { AuthModule } from '../auth/auth.module';
 import { GameModule } from '../game/game.module';
 import { SettlementListener } from './settlement.listener';
 import { settlementOptions } from './settlement.options';
+import { SettlementSweeperService } from './settlement-sweeper.service';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { settlementOptions } from './settlement.options';
     }),
     GameModule,
   ],
-  providers: [SettlementListener],
+  providers: [SettlementListener, SettlementSweeperService],
+  exports: [SettlementSweeperService],
 })
 export class SettlementModule {}
