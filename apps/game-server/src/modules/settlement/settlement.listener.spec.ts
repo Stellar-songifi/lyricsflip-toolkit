@@ -1,10 +1,15 @@
 import { SettlementListener } from './settlement.listener';
 import { GameMode } from '../game/entities/game-session.entity';
 
+jest.mock('@lyricsflip-toolkit/server', () => ({
+  WagerStatus: { WON: 'won', REFUNDED: 'refunded', FAILED: 'failed' },
+}));
+
 describe('SettlementListener', () => {
   const wagers = { settleMatch: jest.fn() };
   const games = { activate: jest.fn(), cancel: jest.fn() };
-  const listener = new SettlementListener(wagers as never, games as never);
+  const metrics = { observeSettlement: jest.fn() };
+  const listener = new SettlementListener(wagers as never, games as never, metrics as never);
 
   beforeEach(() => jest.resetAllMocks());
 
@@ -17,6 +22,7 @@ describe('SettlementListener', () => {
       scores: { a: 10, b: 40 },
     });
     expect(wagers.settleMatch).toHaveBeenCalledWith('s1', { winnerId: 'b' });
+    expect(metrics.observeSettlement).toHaveBeenCalledWith('won', expect.any(Number));
   });
 
   it('settles a tie as a draw', async () => {
@@ -31,7 +37,12 @@ describe('SettlementListener', () => {
 
   it('ignores solo and room sessions', async () => {
     for (const mode of [GameMode.SOLO, GameMode.ROOM]) {
-      await listener.onSessionFinished({ sessionId: 's', mode, playerIds: ['a'], scores: { a: 1 } });
+      await listener.onSessionFinished({
+        sessionId: 's',
+        mode,
+        playerIds: ['a'],
+        scores: { a: 1 },
+      });
     }
     expect(wagers.settleMatch).not.toHaveBeenCalled();
   });
@@ -46,6 +57,7 @@ describe('SettlementListener', () => {
         scores: { a: 1, b: 0 },
       }),
     ).resolves.toBeUndefined();
+    expect(metrics.observeSettlement).toHaveBeenCalledWith('failed', expect.any(Number));
   });
 
   it('starts the match once the wager is staked, and cancels it if the wager ends first', async () => {

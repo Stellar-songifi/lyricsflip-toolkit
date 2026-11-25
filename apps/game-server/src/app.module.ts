@@ -24,6 +24,7 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
 import { PushToken } from './modules/push/push-token.entity';
 import { DailyChallenge } from './modules/daily/entities/daily-challenge.entity';
 import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
@@ -40,7 +41,17 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
           username: db.primary.username,
           password: db.primary.password,
           database: db.primary.name,
-          entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, DailyChallenge, DailyAttempt, ...PVP_ENTITIES],
+          entities: [
+            User,
+            Lyric,
+            GameSession,
+            Notification,
+            Challenge,
+            PushToken,
+            DailyChallenge,
+            DailyAttempt,
+            ...PVP_ENTITIES,
+          ],
           synchronize: false,
           replication: db.replica
             ? {
@@ -65,6 +76,7 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
         };
       },
     }),
+    MetricsModule,
     AuthModule,
     UsersModule,
     LyricsModule,
