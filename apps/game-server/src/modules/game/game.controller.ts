@@ -34,6 +34,13 @@ export class GameController {
     return this.gameService.joinSession(id, userId);
   }
 
+  /** Past matches for the signed-in player (issue #126). */
+  @Get('history')
+  @ApiOkResponse({ type: [GameSessionResponseDto] })
+  history(@CurrentUserId() userId: string) {
+    return this.gameService.historyForUser(userId);
+  }
+
   @Get('sessions/:id')
   @ApiOkResponse({ type: GameSessionResponseDto })
   getSession(@Param('id', ParseUUIDPipe) id: string) {
