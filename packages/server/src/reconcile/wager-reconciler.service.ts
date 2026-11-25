@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { WagerStatus } from '../wager/wager.entity';
 import { WagerService } from '../wager/wager.service';
 
 /** Arbitrary key for the Postgres advisory lock that serialises sweeps. */
@@ -53,21 +54,38 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
 
   private async sweepWithLock(): Promise<void> {
     const runner = this.dataSource.createQueryRunner();
-    await runner.connect();
+    const startedAt = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' | 'skipped' = 'failed';
     try {
+      await runner.connect();
       const [{ locked }] = await runner.query('SELECT pg_try_advisory_lock($1) AS locked', [
         RECONCILE_LOCK_KEY,
       ]);
-      if (!locked) return;
+      if (!locked) {
+        outcome = 'skipped';
+        return;
+      }
       try {
         await this.reconcileDue();
+        outcome = 'success';
       } finally {
         await runner.query('SELECT pg_advisory_unlock($1)', [RECONCILE_LOCK_KEY]);
       }
     } catch (err) {
-      this.logger.error('Wager reconcile sweep failed', (err as Error).stack);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error({
+        message: 'Wager reconcile sweep failed',
+        event: 'reconciliation.sweep.failed',
+        error: { name: error.name, message: error.message, stack: error.stack },
+      });
     } finally {
-      await runner.release();
+      if (!runner.isReleased) await runner.release();
+      const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+      try {
+        this.options.observability?.onReconcileSweep?.({ outcome, durationSeconds });
+      } catch (err) {
+        this.logger.warn(`Reconcile metrics observer threw: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -80,6 +98,29 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
         const after = await this.wagers.reconcile(wager.id);
         if (after.status !== wager.status) {
           this.logger.log(`Wager ${wager.id}: ${wager.status} → ${after.status}`);
+        }
+        const exhausted =
+          after.status === WagerStatus.FAILED
+            ? /^Settlement did not land after (\d+) attempts$/.exec(after.failureReason ?? '')
+            : null;
+        if (exhausted) {
+          const attempts = Number(exhausted[1]);
+          this.logger.error({
+            message: 'Wager exhausted reconciliation attempts',
+            event: 'reconciliation.exhausted',
+            wagerId: after.id,
+            attempts,
+            failureReason: after.failureReason,
+          });
+          try {
+            this.options.observability?.onReconcileExhausted?.({
+              wagerId: after.id,
+              attempts,
+              failureReason: after.failureReason as string,
+            });
+          } catch (err) {
+            this.logger.warn(`Reconcile exhaustion observer threw: ${(err as Error).message}`);
+          }
         }
       } catch (err) {
         this.logger.warn(`Reconcile of wager ${wager.id} threw: ${(err as Error).message}`);

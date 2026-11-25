@@ -77,6 +77,26 @@ export interface ReconcileOptions {
   maxAttempts?: number;
 }
 
+export type ReconcileSweepOutcome = 'success' | 'failed' | 'skipped';
+
+export interface ReconcileSweepObservation {
+  outcome: ReconcileSweepOutcome;
+  durationSeconds: number;
+}
+
+export interface ReconcileExhaustedObservation {
+  wagerId: string;
+  attempts: number;
+  failureReason: string;
+}
+
+export interface PvpObservabilityOptions {
+  /** Called after each reconciliation sweep. Observer errors are ignored. */
+  onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
+  /** Called once when a wager exhausts its settlement reconciliation attempts. */
+  onReconcileExhausted?: (observation: ReconcileExhaustedObservation) => void;
+}
+
 export interface PvpSettlementOptions {
   mode: SettlementMode;
   /** Required when `mode` is `stellar`. */
@@ -96,6 +116,8 @@ export interface PvpSettlementOptions {
   /** Seconds both players have to stake before the wager is refunded. Default 900. */
   stakeWindowSeconds?: number;
   reconcile?: ReconcileOptions;
+  /** Optional hooks for a host application's metrics implementation. */
+  observability?: PvpObservabilityOptions;
   /**
    * Called after each wager status change, e.g. to notify players. Runs
    * after the change is committed; errors are logged and swallowed.

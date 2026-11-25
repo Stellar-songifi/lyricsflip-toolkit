@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -24,9 +24,15 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
 import { PushToken } from './modules/push/push-token.entity';
 import { DailyChallenge } from './modules/daily/entities/daily-challenge.entity';
 import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
+import { MetricsModule } from './metrics/metrics.module';
+import { LoggerModule } from 'nestjs-pino';
+import { loggingModuleOptions } from './config/logging';
+import { RequestContextMiddleware, RequestContextModule } from './config/request-context';
 
 @Module({
   imports: [
+    LoggerModule.forRoot(loggingModuleOptions()),
+    RequestContextModule,
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     EventEmitterModule.forRoot(),
     TypeOrmModule.forRootAsync({
@@ -40,7 +46,17 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
           username: db.primary.username,
           password: db.primary.password,
           database: db.primary.name,
-          entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, DailyChallenge, DailyAttempt, ...PVP_ENTITIES],
+          entities: [
+            User,
+            Lyric,
+            GameSession,
+            Notification,
+            Challenge,
+            PushToken,
+            DailyChallenge,
+            DailyAttempt,
+            ...PVP_ENTITIES,
+          ],
           synchronize: false,
           replication: db.replica
             ? {
@@ -65,6 +81,7 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
         };
       },
     }),
+    MetricsModule,
     AuthModule,
     UsersModule,
     LyricsModule,
@@ -79,4 +96,9 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // LoggerModule's pino-http middleware runs first and assigns request.id.
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}

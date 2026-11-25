@@ -3,10 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { Keypair } from '@stellar/stellar-sdk';
-import type { PvpSettlementOptions } from '@lyricsflip-toolkit/server';
+import { DEFAULTS, type PvpSettlementOptions } from '@lyricsflip-toolkit/server';
 import { AppConfig } from '../../config/configuration';
 import { bearerToken } from '../auth/jwt.config';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { MetricsService, ReconcileSweepOutcome } from '../../metrics/metrics.service';
 
 const logger = new Logger('Settlement');
 
@@ -19,9 +20,11 @@ export function settlementOptions(
   config: ConfigService<AppConfig, true>,
   jwt: JwtService,
   events: EventEmitter2,
+  metrics: MetricsService,
 ): PvpSettlementOptions {
   const stellar = config.get('stellar', { infer: true });
   const sep10 = config.get('sep10', { infer: true });
+  metrics.setReconcileInterval(DEFAULTS.reconcileIntervalSeconds);
 
   let signingSecret = sep10.signingSecret;
   if (!signingSecret) {
@@ -64,5 +67,19 @@ export function settlementOptions(
     onEvent: (event) => {
       events.emit(`pvp.${event.type}`, event);
     },
-  };
+    observability: {
+      onReconcileSweep: ({
+        outcome,
+        durationSeconds,
+      }: {
+        outcome: ReconcileSweepOutcome;
+        durationSeconds: number;
+      }) => {
+        metrics.observeReconcileSweep(outcome, durationSeconds);
+      },
+      onReconcileExhausted: () => {
+        metrics.observeReconcileAttemptsExhausted();
+      },
+    },
+  } as PvpSettlementOptions;
 }

@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { PvpEvent, WagerService } from '@lyricsflip-toolkit/server';
+import { PvpEvent, WagerService, WagerStatus } from '@lyricsflip-toolkit/server';
 import { GameMode } from '../game/entities/game-session.entity';
 import { GameService, SessionFinishedEvent } from '../game/game.service';
 import { headToHeadResult } from '../game/match-result';
+import { MetricsService, SettlementOutcome } from '../../metrics/metrics.service';
 
 /**
  * Connects LyricsFlip matches to the toolkit's wagers. A wager's `matchId`
@@ -22,21 +23,49 @@ export class SettlementListener {
   constructor(
     private readonly wagers: WagerService,
     private readonly games: GameService,
+    private readonly metrics: MetricsService,
   ) {}
 
   @OnEvent('game.session.finished', { async: true, promisify: true })
   async onSessionFinished(event: SessionFinishedEvent): Promise<void> {
     if (event.mode !== GameMode.HEAD_TO_HEAD) return;
+    const startedAt = process.hrtime.bigint();
     try {
       const result = headToHeadResult(event.playerIds, event.scores);
       const wager = await this.wagers.settleMatch(event.sessionId, result);
       if (wager) {
-        this.logger.log(`Session ${event.sessionId} settled: wager ${wager.id} is ${wager.status}`);
+        const outcome = settlementOutcome(wager.status);
+        if (outcome) this.recordSettlement(outcome, startedAt);
+        this.logger.log({
+          message: 'Session settlement completed',
+          event: 'settlement.completed',
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          wagerId: wager.id,
+          wagerStatus: wager.status,
+        });
       }
     } catch (err) {
+      this.recordSettlement('failed', startedAt);
       // The wager stays as it was; the reconciler and operators take over.
-      this.logger.error(`Could not settle session ${event.sessionId}`, (err as Error).stack);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error({
+        message: 'Session settlement failed',
+        event: 'settlement.failed',
+        requestId: event.requestId,
+        sessionId: event.sessionId,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        },
+      });
     }
+  }
+
+  private recordSettlement(outcome: SettlementOutcome, startedAt: bigint): void {
+    const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+    this.metrics.observeSettlement(outcome, durationSeconds);
   }
 
   @OnEvent('pvp.wager.staked', { async: true, promisify: true })
@@ -50,5 +79,18 @@ export class SettlementListener {
   async onWagerEndedEarly(event: PvpEvent): Promise<void> {
     // Only cancels a session still waiting; a played match is untouched.
     await this.games.cancel(event.wager.matchId);
+  }
+}
+
+function settlementOutcome(status: WagerStatus): SettlementOutcome | null {
+  switch (status) {
+    case WagerStatus.WON:
+      return 'won';
+    case WagerStatus.REFUNDED:
+      return 'refunded';
+    case WagerStatus.FAILED:
+      return 'failed';
+    default:
+      return null;
   }
 }
