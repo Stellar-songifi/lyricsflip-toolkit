@@ -1,3 +1,8 @@
+import {
+  ResolverSecretConfig,
+  resolverSecretConfigFromEnv,
+} from '../modules/settlement/resolver-secret.source';
+
 export type SettlementMode = 'mock' | 'stellar';
 export type CustodyMode = 'non-custodial' | 'custodial';
 
@@ -39,7 +44,13 @@ export interface AppConfig {
     networkPassphrase: string;
     escrowContractId: string;
     tokenContractId: string;
-    resolverSecret: string;
+    /**
+     * Where the resolver key comes from (`STELLAR_RESOLVER_SECRET_SOURCE`).
+     * `null` outside stellar mode.
+     */
+    resolverSecretConfig: ResolverSecretConfig | null;
+    /** How long a re-read resolver key is trusted, in ms (`STELLAR_RESOLVER_SECRET_CACHE_TTL_MS`). */
+    resolverSecretCacheTtlMs: number;
     /** Per-request HTTP timeout for RPC calls, in ms. `0` disables it. */
     httpTimeoutMs: number;
   };
@@ -150,7 +161,8 @@ export default (): AppConfig => {
       escrowContractId:
         settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
       tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
-      resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+      resolverSecretConfig: settlementMode === 'stellar' ? resolverSecretConfigFromEnv() : null,
+      resolverSecretCacheTtlMs: parseInt(process.env.STELLAR_RESOLVER_SECRET_CACHE_TTL_MS ?? '60000', 10),
       httpTimeoutMs,
     },
     faucet: {

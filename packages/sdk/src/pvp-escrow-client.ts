@@ -20,7 +20,26 @@ export interface OnChainConfig {
   admin: string;
   resolver: string;
   token: string;
+  /** Platform fee taken from each resolved pot, in basis points (0 = none). */
+  feeBps: number;
+  /** Receives the platform fee; `null` while `feeBps` is 0. */
+  feeRecipient: string | null;
 }
+
+/**
+ * The contract's `Resolved` event. `payout` went to the winner and `fee` to
+ * `feeRecipient`; `payout + fee` is exactly the pot (`2 × stakeAmount`).
+ */
+export interface ResolvedEvent {
+  sessionId: string;
+  winner: string;
+  payout: Stroops;
+  fee: Stroops;
+  feeRecipient: string | null;
+}
+
+/** Highest platform fee the contract accepts, in basis points (10%). */
+export const MAX_FEE_BPS = 1_000;
 
 /** The contract's error codes (`contracts/pvp-escrow/src/lib.rs`). */
 export const PvpEscrowError = {
@@ -38,6 +57,8 @@ export const PvpEscrowError = {
   DeadlinePassed: 14,
   DeadlineNotReached: 15,
   NothingToClaim: 16,
+  NoPendingAdmin: 18,
+  InvalidFee: 19,
 } as const;
 
 const STATUSES: OnChainPotStatus[] = ['open', 'staked', 'resolved', 'refunded'];
@@ -159,7 +180,14 @@ export class PvpEscrowClient {
 
   async getConfig(): Promise<OnChainConfig> {
     const raw = (await this.rpc.read(this.contractId, 'get_config', [])) as Record<string, unknown>;
-    return { admin: String(raw.admin), resolver: String(raw.resolver), token: String(raw.token) };
+    const feeRecipient = raw.fee_recipient;
+    return {
+      admin: String(raw.admin),
+      resolver: String(raw.resolver),
+      token: String(raw.token),
+      feeBps: Number(raw.fee_bps ?? 0),
+      feeRecipient: feeRecipient === null || feeRecipient === undefined ? null : String(feeRecipient),
+    };
   }
 
   private async invokeAsResolver(resolver: Keypair, method: string, args: xdr.ScVal[]): Promise<Submission> {

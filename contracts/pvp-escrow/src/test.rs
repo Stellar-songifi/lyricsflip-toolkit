@@ -661,9 +661,14 @@ fn the_admin_can_rotate_the_resolver() {
 fn only_the_admin_can_hand_over_the_admin_role() {
     let s = Setup::new();
     let attacker = Address::generate(&s.env);
-    s.only_signed_by(&attacker, "set_admin", (attacker.clone(),).into_val(&s.env));
+    s.only_signed_by(
+        &attacker,
+        "propose_admin",
+        (attacker.clone(),).into_val(&s.env),
+    );
 
-    assert!(s.escrow.try_set_admin(&attacker).is_err());
+    assert!(s.escrow.try_propose_admin(&attacker).is_err());
+    assert_eq!(s.escrow.pending_admin(), None);
     assert_eq!(s.escrow.get_config().admin, s.admin);
 }
 
@@ -715,6 +720,8 @@ fn resolve_publishes_the_winner_and_payout() {
         session_id: s.session_id.clone(),
         winner: s.player_a.clone(),
         payout: 2 * STAKE,
+        fee: 0,
+        fee_recipient: None,
     };
     let events = s.env.events().all();
     let last = events.events().last().expect("an event").clone();
@@ -806,4 +813,200 @@ fn refund_event_reports_zero_for_a_stake_already_reclaimed() {
         player_b_amount: STAKE,
     };
     assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
+}
+
+// --- two-step admin transfer (#72) ---------------------------------------
+
+#[test]
+fn proposing_an_admin_moves_no_authority() {
+    let s = Setup::new();
+    let candidate = Address::generate(&s.env);
+
+    s.escrow.propose_admin(&candidate);
+    assert!(s.last_auth_was(&s.admin, "propose_admin"));
+
+    assert_eq!(s.escrow.pending_admin(), Some(candidate.clone()));
+    assert_eq!(s.escrow.get_config().admin, s.admin);
+
+    // The old admin still controls every admin-gated call…
+    let new_resolver = Address::generate(&s.env);
+    s.escrow.set_resolver(&new_resolver);
+    assert!(s.last_auth_was(&s.admin, "set_resolver"));
+    assert_eq!(s.escrow.get_config().resolver, new_resolver);
+
+    // …and the candidate controls none of them yet.
+    s.only_signed_by(
+        &candidate,
+        "set_resolver",
+        (candidate.clone(),).into_val(&s.env),
+    );
+    assert!(s.escrow.try_set_resolver(&candidate).is_err());
+}
+
+#[test]
+fn accepting_hands_over_the_admin_role() {
+    let s = Setup::new();
+    let candidate = Address::generate(&s.env);
+    s.escrow.propose_admin(&candidate);
+
+    s.escrow.accept_admin();
+
+    assert!(s.last_auth_was(&candidate, "accept_admin"));
+    assert_eq!(s.escrow.get_config().admin, candidate);
+    assert_eq!(s.escrow.pending_admin(), None);
+
+    // The new admin now holds authority, the old one doesn't.
+    let new_resolver = Address::generate(&s.env);
+    s.escrow.set_resolver(&new_resolver);
+    assert!(s.last_auth_was(&candidate, "set_resolver"));
+    s.only_signed_by(
+        &s.admin,
+        "set_resolver",
+        (s.admin.clone(),).into_val(&s.env),
+    );
+    assert!(s.escrow.try_set_resolver(&s.admin).is_err());
+}
+
+#[test]
+fn only_the_candidate_can_accept() {
+    let s = Setup::new();
+    let candidate = Address::generate(&s.env);
+    s.escrow.propose_admin(&candidate);
+
+    s.only_signed_by(&s.admin, "accept_admin", ().into_val(&s.env));
+    assert!(s.escrow.try_accept_admin().is_err());
+    assert_eq!(s.escrow.get_config().admin, s.admin);
+}
+
+#[test]
+fn accept_without_a_proposal_fails() {
+    let s = Setup::new();
+    assert_eq!(s.escrow.try_accept_admin(), Err(Ok(Error::NoPendingAdmin)));
+}
+
+#[test]
+fn a_never_accepted_proposal_leaves_the_old_admin_in_charge() {
+    let s = Setup::new();
+    let typo = Address::generate(&s.env);
+    let real = Address::generate(&s.env);
+    s.escrow.propose_admin(&typo);
+
+    // The old admin notices the mistake and proposes again; the typo can no
+    // longer accept.
+    s.escrow.propose_admin(&real);
+    assert_eq!(s.escrow.pending_admin(), Some(real.clone()));
+    s.escrow.accept_admin();
+    assert_eq!(s.escrow.get_config().admin, real);
+}
+
+// --- platform fee (#76) ---------------------------------------------------
+
+#[test]
+fn zero_fee_pays_the_winner_the_whole_pot() {
+    let s = Setup::new();
+    assert_eq!(s.escrow.get_config().fee_bps, 0);
+    assert_eq!(s.escrow.get_config().fee_recipient, None);
+    s.open_and_stake_both();
+
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE + STAKE);
+    assert_eq!(s.escrow_balance(), 0);
+}
+
+#[test]
+fn a_fee_splits_the_pot_with_no_rounding_leak() {
+    let s = Setup::new();
+    let treasury = Address::generate(&s.env);
+    // 2.5% of a 1,000 pot = 25.
+    s.escrow.set_fee(&250, &Some(treasury.clone()));
+    assert!(s.last_auth_was(&s.admin, "set_fee"));
+    s.open_and_stake_both();
+
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    let pot_total = 2 * STAKE;
+    let fee = pot_total * 250 / 10_000;
+    assert_eq!(s.token.balance(&treasury), fee);
+    assert_eq!(
+        s.token.balance(&s.player_a),
+        START_BALANCE - STAKE + pot_total - fee
+    );
+    assert_eq!(s.escrow_balance(), 0);
+}
+
+#[test]
+fn an_odd_fee_rounds_down_and_the_winner_gets_the_remainder() {
+    let s = Setup::new();
+    let treasury = Address::generate(&s.env);
+    s.escrow.set_fee(&333, &Some(treasury.clone()));
+    s.open_and_stake_both();
+
+    s.escrow.resolve(&s.session_id, &s.player_b);
+
+    let pot_total = 2 * STAKE; // 1,000
+    let fee = s.token.balance(&treasury);
+    assert_eq!(fee, 33); // floor(1000 * 333 / 10000)
+    assert_eq!(
+        s.token.balance(&s.player_b) - (START_BALANCE - STAKE) + fee,
+        pot_total
+    );
+    assert_eq!(s.escrow_balance(), 0);
+}
+
+#[test]
+fn resolved_event_reports_payout_and_fee() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::Event as _;
+    let s = Setup::new();
+    let treasury = Address::generate(&s.env);
+    s.escrow.set_fee(&1_000, &Some(treasury.clone()));
+    s.open_and_stake_both();
+
+    s.escrow.resolve(&s.session_id, &s.player_a);
+
+    let expected = Resolved {
+        session_id: s.session_id.clone(),
+        winner: s.player_a.clone(),
+        payout: 900,
+        fee: 100,
+        fee_recipient: Some(treasury),
+    };
+    let events = s.env.events().all();
+    let last = events.events().last().expect("an event").clone();
+    assert_eq!(last, expected.to_xdr(&s.env, &s.escrow.address));
+}
+
+#[test]
+fn set_fee_is_capped_and_needs_a_recipient() {
+    let s = Setup::new();
+    let treasury = Address::generate(&s.env);
+    assert_eq!(
+        s.escrow.try_set_fee(&1_001, &Some(treasury.clone())),
+        Err(Ok(Error::InvalidFee))
+    );
+    assert_eq!(
+        s.escrow.try_set_fee(&100, &None),
+        Err(Ok(Error::InvalidFee))
+    );
+
+    s.escrow.set_fee(&MAX_FEE_BPS, &Some(treasury.clone()));
+    assert_eq!(s.escrow.get_config().fee_bps, MAX_FEE_BPS);
+
+    s.escrow.set_fee(&0, &None);
+    assert_eq!(s.escrow.get_config().fee_bps, 0);
+    assert_eq!(s.escrow.get_config().fee_recipient, None);
+}
+
+#[test]
+fn only_the_admin_can_set_the_fee() {
+    let s = Setup::new();
+    let attacker = Address::generate(&s.env);
+    s.only_signed_by(
+        &attacker,
+        "set_fee",
+        (500u32, Some(attacker.clone())).into_val(&s.env),
+    );
+    assert!(s.escrow.try_set_fee(&500, &Some(attacker.clone())).is_err());
+    assert_eq!(s.escrow.get_config().fee_bps, 0);
 }

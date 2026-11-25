@@ -6,6 +6,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 import type { PvpSettlementOptions } from '@lyricsflip-toolkit/server';
 import { AppConfig } from '../../config/configuration';
 import { bearerToken } from '../auth/jwt.config';
+import { resolverSecretProvider } from './resolver-secret.source';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 const logger = new Logger('Settlement');
@@ -42,7 +43,7 @@ export function settlementOptions(
             networkPassphrase: stellar.networkPassphrase,
             escrowContractId: stellar.escrowContractId,
             tokenContractId: stellar.tokenContractId,
-            resolverSecret: stellar.resolverSecret,
+            ...resolverKeyOptions(stellar.resolverSecretConfig, stellar.resolverSecretCacheTtlMs),
             custodyMode: stellar.custodyMode,
             httpTimeoutMs: stellar.httpTimeoutMs,
           }
@@ -64,5 +65,23 @@ export function settlementOptions(
     onEvent: (event) => {
       events.emit(`pvp.${event.type}`, event);
     },
+  };
+}
+
+/**
+ * A static `resolverSecret` for the `env` source; otherwise a
+ * `resolverSecretProvider` the toolkit re-reads after `cacheTtlMs`, so the key
+ * can be rotated without a restart (#68).
+ */
+function resolverKeyOptions(
+  config: AppConfig['stellar']['resolverSecretConfig'],
+  cacheTtlMs: number,
+): { resolverSecret?: string; resolverSecretProvider?: () => Promise<string>; resolverSecretCacheTtlMs?: number } {
+  if (!config) return {};
+  if (config.source === 'env') return { resolverSecret: config.secret };
+  logger.log(`Resolver key source: ${config.source} (re-read every ${cacheTtlMs} ms)`);
+  return {
+    resolverSecretProvider: resolverSecretProvider(config) ?? undefined,
+    resolverSecretCacheTtlMs: cacheTtlMs,
   };
 }
