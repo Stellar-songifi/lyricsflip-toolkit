@@ -807,3 +807,142 @@ fn refund_event_reports_zero_for_a_stake_already_reclaimed() {
     };
     assert_eq!(last_event(&s), expected.to_xdr(&s.env, &s.escrow.address));
 }
+
+// --- pause (#73) ----------------------------------------------------------
+
+#[test]
+fn pause_blocks_new_pots_and_stakes() {
+    let s = Setup::new();
+    s.escrow.pause();
+    assert!(s.last_auth_was(&s.admin, "pause"));
+    assert!(s.escrow.is_paused());
+
+    assert_eq!(
+        s.escrow
+            .try_open_pot(&s.session_id, &s.player_a, &s.player_b, &STAKE, &TIMEOUT),
+        Err(Ok(Error::Paused))
+    );
+}
+
+#[test]
+fn pause_blocks_stakes_into_a_pot_opened_before() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.pause();
+
+    assert_eq!(
+        s.escrow.try_stake(&s.session_id, &s.player_a),
+        Err(Ok(Error::Paused))
+    );
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+}
+
+#[test]
+fn resolve_still_works_while_paused() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.pause();
+
+    s.escrow.resolve(&s.session_id, &s.player_b);
+
+    assert_eq!(s.token.balance(&s.player_b), START_BALANCE + STAKE);
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Resolved);
+}
+
+#[test]
+fn refund_still_works_while_paused() {
+    let s = Setup::new();
+    s.open();
+    s.escrow.stake(&s.session_id, &s.player_a);
+    s.escrow.pause();
+
+    s.escrow.refund(&s.session_id);
+
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Refunded);
+}
+
+#[test]
+fn claim_refund_still_works_while_paused() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    s.escrow.pause();
+    s.pass_deadline();
+
+    s.escrow.claim_refund(&s.session_id, &s.player_a);
+
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE);
+}
+
+#[test]
+fn unpause_restores_normal_behaviour() {
+    let s = Setup::new();
+    s.escrow.pause();
+    s.escrow.unpause();
+    assert!(s.last_auth_was(&s.admin, "unpause"));
+    assert!(!s.escrow.is_paused());
+
+    s.open_and_stake_both();
+    s.escrow.resolve(&s.session_id, &s.player_a);
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE + STAKE);
+}
+
+#[test]
+fn only_the_admin_can_pause() {
+    let s = Setup::new();
+    s.only_signed_by(&s.resolver, "pause", ().into_val(&s.env));
+    assert!(s.escrow.try_pause().is_err());
+    assert!(!s.escrow.is_paused());
+}
+
+#[test]
+fn only_the_admin_can_unpause() {
+    let s = Setup::new();
+    s.escrow.pause();
+    s.only_signed_by(&s.resolver, "unpause", ().into_val(&s.env));
+    assert!(s.escrow.try_unpause().is_err());
+    assert!(s.escrow.is_paused());
+}
+
+// --- upgrade (#77) --------------------------------------------------------
+
+extern crate std;
+
+/// The release Wasm built by `cargo build --target wasm32v1-none --release`.
+fn release_wasm() -> std::vec::Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../target/wasm32v1-none/release/pvp_escrow.wasm"
+    );
+    std::fs::read(path).unwrap_or_else(|_| {
+        panic!("{path} is missing: run `cargo build --target wasm32v1-none --release` first")
+    })
+}
+
+#[test]
+fn only_the_admin_can_upgrade() {
+    let s = Setup::new();
+    let hash = BytesN::from_array(&s.env, &[1u8; 32]);
+    s.only_signed_by(&s.resolver, "upgrade", (hash.clone(),).into_val(&s.env));
+    assert!(s.escrow.try_upgrade(&hash).is_err());
+}
+
+#[test]
+#[ignore = "needs the release Wasm; CI runs it after `cargo build --target wasm32v1-none --release`"]
+fn upgrade_swaps_the_code_and_keeps_pots_and_funds() {
+    let s = Setup::new();
+    s.open_and_stake_both();
+    let hash = s
+        .env
+        .deployer()
+        .upload_contract_wasm(release_wasm().as_slice());
+
+    s.escrow.upgrade(&hash);
+
+    assert!(s.last_auth_was(&s.admin, "upgrade"));
+    // Same address, same storage, same balance: the live pot settles normally.
+    assert_eq!(s.escrow.get_pot(&s.session_id).status, PotStatus::Staked);
+    assert_eq!(s.escrow_balance(), 2 * STAKE);
+    s.escrow.resolve(&s.session_id, &s.player_a);
+    assert_eq!(s.token.balance(&s.player_a), START_BALANCE + STAKE);
+}
