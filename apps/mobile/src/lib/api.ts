@@ -1,92 +1,25 @@
-/** Typed client for apps/game-server. Every call but sign-in sends the JWT. */
+/**
+ * Typed client for apps/game-server. Every call but sign-in sends the JWT.
+ *
+ * Request/response types are generated from the server's OpenAPI document
+ * (see `api-types.ts`, produced by `npm run openapi:types`). Do not hand-edit
+ * those shapes here — change the server DTOs and regenerate instead.
+ */
 
-export interface User {
-  id: string;
-  username: string;
-  walletAddress: string | null;
-  xp: number;
-  level: string;
-  correctGuesses: number;
-  gamesPlayed: number;
-  nextLevel?: { level: string; minXp: number } | null;
-}
+import type { components } from './api-types';
 
-export interface PublicLyric {
-  id: string;
-  snippet: string;
-  genre: string;
-  decade: number;
-}
+type Schemas = components['schemas'];
 
-export type GuessOutcome = 'correct' | 'partial' | 'miss';
-
-export interface GuessResult {
-  outcome: GuessOutcome;
-  pointsAwarded: number;
-  streak: number;
-  nextLyric: PublicLyric | null;
-  sessionStatus: 'waiting' | 'active' | 'finished' | 'cancelled';
-}
-
-export interface GameSession {
-  id: string;
-  mode: 'solo' | 'room' | 'head_to_head';
-  status: 'waiting' | 'active' | 'finished' | 'cancelled';
-  playerIds: string[];
-  currentRound: number;
-  scores: Record<string, number>;
-}
-
-export interface Challenge {
-  code: string;
-  status: 'pending' | 'accepted' | 'expired';
-  hostUserId: string;
-  stakeAmount: string | null;
-  gameSessionId: string | null;
-  wagerId: string | null;
-  expiresAt: string;
-}
-
-export type WagerStatus =
-  | 'pending'
-  | 'awaiting_stakes'
-  | 'staked'
-  | 'settling'
-  | 'won'
-  | 'refunded'
-  | 'cancelled'
-  | 'failed';
-
-export interface Wager {
-  id: string;
-  matchId: string;
-  playerAId: string;
-  playerBId: string;
-  stakeAmount: string;
-  status: WagerStatus;
-  playerAStakedAt: string | null;
-  playerBStakedAt: string | null;
-  winnerId: string | null;
-  settlementTxHash: string | null;
-}
-
-export interface DailyView {
-  date: string;
-  totalPoints: number;
-  complete: boolean;
-  lyrics: Array<
-    PublicLyric & { attempt: { outcome: GuessOutcome; points: number; title: string; artist: string } | null }
-  >;
-}
-
-export interface Notification {
-  id: string;
-  type: string;
-  message: string;
-  read: boolean;
-  data: Record<string, unknown> | null;
-  createdAt: string;
-}
+export type User = Schemas['UserDto'];
+export type PublicLyric = Schemas['PublicLyricDto'];
+export type GuessOutcome = Schemas['GuessResultDto']['outcome'];
+export type GuessResult = Schemas['GuessResultDto'];
+export type GameSession = Schemas['GameSessionDto'];
+export type Challenge = Schemas['ChallengeDto'];
+export type WagerStatus = Schemas['WagerDto']['status'];
+export type Wager = Schemas['WagerDto'];
+export type DailyView = Schemas['DailyViewDto'];
+export type Notification = Schemas['NotificationDto'];
 
 export class ApiError extends Error {
   constructor(
@@ -143,11 +76,11 @@ export function createApi(
   return {
     auth: {
       challenge: (walletAddress: string) =>
-        request<{ transactionXdr: string; networkPassphrase: string }>('POST', '/auth/stellar/challenge', {
+        request<Schemas['AuthChallengeResponseDto']>('POST', '/auth/stellar/challenge', {
           walletAddress,
         }),
       verify: (walletAddress: string, signedTransactionXdr: string) =>
-        request<{ accessToken: string; user: User }>('POST', '/auth/stellar/verify', {
+        request<Schemas['AuthVerifyResponseDto']>('POST', '/auth/stellar/verify', {
           walletAddress,
           signedTransactionXdr,
         }),
@@ -168,7 +101,7 @@ export function createApi(
     daily: {
       today: () => request<DailyView>('GET', '/daily'),
       guess: (lyricId: string, guess: string) =>
-        request<{ outcome: GuessOutcome; points: number; title: string; artist: string }>('POST', '/daily/guess', {
+        request<Schemas['DailyGuessResultDto']>('POST', '/daily/guess', {
           lyricId,
           guess,
         }),
@@ -181,7 +114,7 @@ export function createApi(
         }),
       get: (code: string) => request<Challenge>('GET', `/challenges/${encodeURIComponent(code)}`),
       accept: (code: string) =>
-        request<{ gameSessionId: string; wagerId: string | null }>(
+        request<Schemas['AcceptChallengeResponseDto']>(
           'POST',
           `/challenges/${encodeURIComponent(code)}/accept`,
         ),
@@ -190,7 +123,7 @@ export function createApi(
       list: () => request<Wager[]>('GET', '/wagers'),
       get: (id: string) => request<Wager>('GET', `/wagers/${id}`),
       stakeTransaction: (id: string) =>
-        request<{ transaction: { transactionXdr: string; networkPassphrase: string } | null }>(
+        request<Schemas['StakeTransactionResponseDto']>(
           'POST',
           `/wagers/${id}/stake-transaction`,
         ),
@@ -199,20 +132,20 @@ export function createApi(
     },
     faucet: {
       info: () =>
-        request<{ enabled: boolean; asset: string | null; amount: string | null; rpcUrl: string | null; networkPassphrase: string | null }>(
+        request<Schemas['FaucetInfoDto']>(
           'GET',
           '/faucet',
           undefined,
           10_000,
         ),
-      claim: () => request<{ txHash: string; amount: string }>('POST', '/faucet', undefined, 10_000),
+      claim: () => request<Schemas['FaucetClaimResponseDto']>('POST', '/faucet', undefined, 10_000),
     },
     notifications: {
       list: () => request<Notification[]>('GET', '/notifications'),
     },
     push: {
       register: (token: string, platform: 'ios' | 'android') =>
-        request<{ token: string }>('POST', '/push-tokens', { token, platform }),
+        request<Schemas['PushTokenResponseDto']>('POST', '/push-tokens', { token, platform }),
     },
   };
 }

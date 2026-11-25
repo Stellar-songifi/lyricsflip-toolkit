@@ -21,7 +21,11 @@
     "migration:create": "typeorm-ts-node-commonjs migration:create",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
-    "seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts",
+    "openapi:export": "ts-node -r tsconfig-paths/register scripts/export-openapi.ts",
+    "openapi:types": "openapi-typescript openapi.json -o ../mobile/src/lib/api-types.ts",
+    "openapi:generate": "npm run openapi:export && npm run openapi:types",
+    "openapi:check": "npm run openapi:export && git diff --exit-code -- openapi.json ../mobile/src/lib/api-types.ts"
   },
   "dependencies": {
     "@lyricsflip-toolkit/server": "0.1.0",
@@ -66,6 +70,7 @@
     "eslint-config-prettier": "^9.1.0",
     "typescript-eslint": "^8.18.1",
     "jest": "^29.7.0",
+    "openapi-typescript": "^7.4.4",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
