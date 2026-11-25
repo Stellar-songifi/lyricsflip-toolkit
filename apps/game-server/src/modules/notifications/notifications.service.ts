@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Repository } from 'typeorm';
@@ -14,6 +14,8 @@ const PUSHED = new Set(['challenge.invite', 'match.finished', 'wager.stake_reque
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationsRepository: Repository<Notification>,
@@ -48,11 +50,17 @@ export class NotificationsService {
     await this.notificationsRepository.update({ id, userId }, { read: true });
   }
 
+  /** Fire-and-forget helper that logs any push() rejection instead of letting it become unhandled. */
+  private safePush(userId: string, type: string, message: string, data?: Record<string, unknown> | null): void {
+    this.push(userId, type, message, data ?? null).catch((err: unknown) => {
+      this.logger.error(`push failed for user=${userId} type=${type}: ${String(err)}`);
+    });
+  }
+
   @OnEvent('guess.submitted')
-  handleGuessSubmitted(payload: { sessionId: string; userId: string; outcome: string }) {
-    if (payload.outcome === 'correct') {
-      void this.push(payload.userId, 'guess.correct', 'Nice — that one was correct.');
-    }
+  handleGuessSubmitted(_payload: { sessionId: string; userId: string; outcome: string }) {
+    // 'guess.correct' is not in PUSHED and fires for every correct guess, so writing a
+    // Notification row for it generates DB noise with no value to the user. Skip it entirely.
   }
 
   @OnEvent('game.session.finished')
@@ -63,7 +71,7 @@ export class NotificationsService {
       const mine = event.scores[userId] ?? 0;
       const theirs = event.playerIds.filter((id) => id !== userId).map((id) => event.scores[id] ?? 0)[0] ?? 0;
       const verdict = mine > theirs ? 'You won' : mine < theirs ? 'You lost' : "It's a draw";
-      void this.push(userId, 'match.finished', `${verdict}, ${mine}–${theirs}.`, data);
+      this.safePush(userId, 'match.finished', `${verdict}, ${mine}–${theirs}.`, data);
     }
   }
 
@@ -72,8 +80,8 @@ export class NotificationsService {
     const stake = fromStroops(wager.stakeAmount);
     const message = `Your match is on. Stake ${stake} to start playing.`;
     const data = { url: deepLink.match(wager.matchId), sessionId: wager.matchId, wagerId: wager.id };
-    void this.push(wager.playerAId, 'wager.stake_requested', message, data);
-    void this.push(wager.playerBId, 'wager.stake_requested', message, data);
+    this.safePush(wager.playerAId, 'wager.stake_requested', message, data);
+    this.safePush(wager.playerBId, 'wager.stake_requested', message, data);
   }
 
   @OnEvent('pvp.wager.won')
@@ -81,15 +89,15 @@ export class NotificationsService {
     const loserId = wager.winnerId === wager.playerAId ? wager.playerBId : wager.playerAId;
     const pot = fromStroops((BigInt(wager.stakeAmount) * 2n).toString());
     const data = { url: deepLink.results(wager.matchId), sessionId: wager.matchId, wagerId: wager.id };
-    void this.push(wager.winnerId as string, 'wager.won', `You won the pot: ${pot}.`, data);
-    void this.push(loserId, 'wager.lost', 'Your opponent took the pot this time.', data);
+    this.safePush(wager.winnerId as string, 'wager.won', `You won the pot: ${pot}.`, data);
+    this.safePush(loserId, 'wager.lost', 'Your opponent took the pot this time.', data);
   }
 
   @OnEvent('pvp.wager.refunded')
   handleWagerRefunded({ wager }: PvpEvent) {
     const message = 'Your stake was returned.';
     const data = { url: deepLink.results(wager.matchId), sessionId: wager.matchId, wagerId: wager.id };
-    void this.push(wager.playerAId, 'wager.refunded', message, data);
-    void this.push(wager.playerBId, 'wager.refunded', message, data);
+    this.safePush(wager.playerAId, 'wager.refunded', message, data);
+    this.safePush(wager.playerBId, 'wager.refunded', message, data);
   }
 }

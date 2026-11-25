@@ -54,6 +54,25 @@ export class UsersService {
     });
   }
 
+  /** Returns the top `limit` players ranked by XP earned in the current UTC week (Mon 00:00 → Sun 23:59). */
+  async getWeeklyLeaderboard(limit = 20): Promise<{ userId: string; displayName: string | null; xpThisWeek: number }[]> {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay(); // 0 = Sun
+    const daysFromMonday = (dayOfWeek + 6) % 7;
+    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysFromMonday));
+
+    return this.usersRepository
+      .createQueryBuilder('u')
+      .select('u.id', 'userId')
+      .addSelect('u.displayName', 'displayName')
+      .addSelect('COALESCE(SUM(xe.xp), 0)::int', 'xpThisWeek')
+      .leftJoin('xp_event', 'xe', 'xe.userId = u.id AND xe.createdAt >= :weekStart', { weekStart })
+      .groupBy('u.id')
+      .orderBy('"xpThisWeek"', 'DESC')
+      .limit(limit)
+      .getRawMany();
+  }
+
   /** Awards XP/score for a guess and recomputes the player's level. */
   async awardXp(userId: string, xpGained: number, wasCorrect: boolean): Promise<User> {
     const user = await this.findById(userId);
