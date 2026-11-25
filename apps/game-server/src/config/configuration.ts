@@ -1,3 +1,5 @@
+import { validateEnvironment } from './environment';
+
 export type SettlementMode = 'mock' | 'stellar';
 export type CustodyMode = 'non-custodial' | 'custodial';
 
@@ -64,79 +66,43 @@ export interface AppConfig {
   };
 }
 
-function required(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${key}`);
-  }
-  return value;
-}
-
 export default (): AppConfig => {
-  const settlementMode = (process.env.STELLAR_SETTLEMENT_MODE ?? 'mock') as SettlementMode;
-  const custodyMode = (process.env.STELLAR_CUSTODY_MODE ?? 'non-custodial') as CustodyMode;
-  const network = process.env.STELLAR_NETWORK ?? 'testnet';
-
-  if (settlementMode !== 'mock' && settlementMode !== 'stellar') {
-    throw new Error(`STELLAR_SETTLEMENT_MODE must be "mock" or "stellar", got "${settlementMode}"`);
-  }
-  if (custodyMode === 'custodial' && network === 'public') {
-    throw new Error(
-      'STELLAR_CUSTODY_MODE=custodial is refused when STELLAR_NETWORK=public. ' +
-        'Custodial key handling on mainnet needs an explicit, audited opt-in.',
-    );
-  }
-
-  const nodeEnv = process.env.NODE_ENV ?? 'development';
-  const corsOrigin = process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? null;
-
-  if (nodeEnv === 'production' && (!corsOrigin || corsOrigin === '*')) {
-    throw new Error('CORS_ORIGIN must be explicitly set to a specific origin in production mode');
-  }
+  const env = validateEnvironment(process.env);
+  const settlementMode = (env.STELLAR_SETTLEMENT_MODE ?? 'mock') as SettlementMode;
+  const custodyMode = (env.STELLAR_CUSTODY_MODE ?? 'non-custodial') as CustodyMode;
+  const network = env.STELLAR_NETWORK ?? 'testnet';
+  const nodeEnv = env.NODE_ENV ?? 'development';
+  const corsOrigin = env.CORS_ORIGIN ?? env.FRONTEND_URL ?? null;
 
   const hasReplica = Boolean(process.env.DB_REPLICA_HOST);
 
-  const rawRounds = process.env.ROUNDS_PER_SESSION ?? '10';
-  const roundsPerSession = Number(rawRounds);
-  if (!Number.isInteger(roundsPerSession) || roundsPerSession < 1) {
-    throw new Error(`ROUNDS_PER_SESSION must be a positive integer, got "${rawRounds}"`);
-  }
-
-  const rawHttpTimeoutMs = process.env.STELLAR_RPC_HTTP_TIMEOUT_MS ?? '15000';
-  const httpTimeoutMs = Number(rawHttpTimeoutMs);
-  // A hung RPC node must not hold the request handler open, so the timeout has
-  // to be a real, non-negative number of milliseconds. `0` opts out.
-  if (!Number.isFinite(httpTimeoutMs) || httpTimeoutMs < 0) {
-    throw new Error(
-      `STELLAR_RPC_HTTP_TIMEOUT_MS must be a non-negative number of milliseconds ` +
-        `(0 disables the timeout), got "${rawHttpTimeoutMs}"`,
-    );
-  }
+  const roundsPerSession = env.ROUNDS_PER_SESSION ?? 10;
+  const httpTimeoutMs = env.STELLAR_RPC_HTTP_TIMEOUT_MS ?? 15_000;
 
   return {
-    port: parseInt(process.env.PORT ?? '3001', 10),
+    port: env.PORT ?? 3001,
     nodeEnv,
     roundsPerSession,
     corsOrigin,
     jwt: {
-      secret: required('JWT_SECRET'),
+      secret: env.JWT_SECRET,
       expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
     },
     database: {
       primary: {
-        host: required('DB_HOST'),
-        port: parseInt(required('DB_PORT'), 10),
-        username: required('DB_USERNAME'),
-        password: required('DB_PASSWORD'),
-        name: required('DB_NAME'),
+        host: env.DB_HOST,
+        port: env.DB_PORT,
+        username: env.DB_USERNAME,
+        password: env.DB_PASSWORD,
+        name: env.DB_NAME,
       },
       replica: hasReplica
         ? {
             host: process.env.DB_REPLICA_HOST as string,
             port: parseInt(process.env.DB_REPLICA_PORT ?? process.env.DB_PORT ?? '5432', 10),
-            username: process.env.DB_REPLICA_USERNAME ?? required('DB_USERNAME'),
-            password: process.env.DB_REPLICA_PASSWORD ?? required('DB_PASSWORD'),
-            name: process.env.DB_REPLICA_NAME ?? required('DB_NAME'),
+            username: process.env.DB_REPLICA_USERNAME ?? env.DB_USERNAME,
+            password: process.env.DB_REPLICA_PASSWORD ?? env.DB_PASSWORD,
+            name: process.env.DB_REPLICA_NAME ?? env.DB_NAME,
           }
         : null,
     },
@@ -148,9 +114,10 @@ export default (): AppConfig => {
       networkPassphrase:
         process.env.STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015',
       escrowContractId:
-        settlementMode === 'stellar' ? required('STELLAR_ESCROW_CONTRACT_ID') : '',
-      tokenContractId: settlementMode === 'stellar' ? required('STELLAR_TOKEN_CONTRACT_ID') : '',
-      resolverSecret: settlementMode === 'stellar' ? required('STELLAR_RESOLVER_SECRET') : '',
+        settlementMode === 'stellar' ? (env.STELLAR_ESCROW_CONTRACT_ID as string) : '',
+      tokenContractId:
+        settlementMode === 'stellar' ? (env.STELLAR_TOKEN_CONTRACT_ID as string) : '',
+      resolverSecret: settlementMode === 'stellar' ? (env.STELLAR_RESOLVER_SECRET as string) : '',
       httpTimeoutMs,
     },
     faucet: {
@@ -160,8 +127,8 @@ export default (): AppConfig => {
     },
     push: {
       enabled:
-        (process.env.EXPO_PUSH_ENABLED ?? ((process.env.NODE_ENV ?? 'development') === 'production' ? 'true' : 'false')) ===
-        'true',
+        (process.env.EXPO_PUSH_ENABLED ??
+          ((process.env.NODE_ENV ?? 'development') === 'production' ? 'true' : 'false')) === 'true',
       accessToken: process.env.EXPO_ACCESS_TOKEN ?? '',
     },
     sep10: {
@@ -169,7 +136,7 @@ export default (): AppConfig => {
       // pending logins break. Only optional outside production.
       signingSecret:
         (process.env.NODE_ENV ?? 'development') === 'production'
-          ? required('SEP10_SIGNING_SECRET')
+          ? (env.SEP10_SIGNING_SECRET as string)
           : (process.env.SEP10_SIGNING_SECRET ?? ''),
       homeDomain: process.env.SEP10_HOME_DOMAIN ?? 'localhost',
     },

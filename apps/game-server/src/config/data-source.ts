@@ -10,17 +10,30 @@ import { PushToken } from '../modules/push/push-token.entity';
 import { DailyChallenge } from '../modules/daily/entities/daily-challenge.entity';
 import { DailyAttempt } from '../modules/daily/entities/daily-attempt.entity';
 import { PVP_ENTITIES, PVP_MIGRATIONS } from '@lyricsflip-toolkit/server';
+import { databaseConnectionOptions } from './database-options';
 
 dotenv.config();
 
+const database = databaseConnectionOptions();
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  host: process.env.DB_HOST ?? 'localhost',
-  port: parseInt(process.env.DB_PORT ?? '5432', 10),
-  username: process.env.DB_USERNAME ?? 'postgres',
-  password: process.env.DB_PASSWORD ?? 'postgres',
-  database: process.env.DB_NAME ?? 'lyricflip',
-  entities: [User, Lyric, GameSession, Notification, Challenge, PushToken, DailyChallenge, DailyAttempt, ...PVP_ENTITIES],
+  host: database.host,
+  port: database.port,
+  username: database.username,
+  password: database.password,
+  database: database.database,
+  entities: [
+    User,
+    Lyric,
+    GameSession,
+    Notification,
+    Challenge,
+    PushToken,
+    DailyChallenge,
+    DailyAttempt,
+    ...PVP_ENTITIES,
+  ],
   // The game's own migrations, then the toolkit's (wagers, wallet links, mock pots).
   migrations: [__dirname + '/../database/migrations/*.{ts,js}', ...PVP_MIGRATIONS],
   synchronize: false,
