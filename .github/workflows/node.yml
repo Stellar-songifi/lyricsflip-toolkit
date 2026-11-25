@@ -58,3 +58,54 @@ jobs:
 
       - name: End-to-end tests
         run: npm run test:e2e
+
+  migration-drift:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lyricsflip_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_migrations
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run all migrations against a fresh database
+        working-directory: apps/game-server
+        run: npm run migration:run
+
+      - name: Check for migration drift
+        working-directory: apps/game-server
+        run: |
+          set -o pipefail
+          OUTPUT="$(npx typeorm schema:log --dataSource src/config/data-source.ts 2>&1)" || {
+            echo "$OUTPUT"
+            echo "::error::Failed to compute schema diff against entities."
+            exit 1
+          }
+          echo "$OUTPUT"
+          if ! echo "$OUTPUT" | grep -qi "schema is up to date"; then
+            echo "::error::Migration drift detected: committed migrations do not match the entities. Generate and commit the missing migration(s)."
+            exit 1
+          fi
