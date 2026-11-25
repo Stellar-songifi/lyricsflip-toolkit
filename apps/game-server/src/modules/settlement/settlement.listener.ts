@@ -31,11 +31,29 @@ export class SettlementListener {
       const result = headToHeadResult(event.playerIds, event.scores);
       const wager = await this.wagers.settleMatch(event.sessionId, result);
       if (wager) {
-        this.logger.log(`Session ${event.sessionId} settled: wager ${wager.id} is ${wager.status}`);
+        this.logger.log({
+          message: 'Session settlement completed',
+          event: 'settlement.completed',
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          wagerId: wager.id,
+          wagerStatus: wager.status,
+        });
       }
     } catch (err) {
       // The wager stays as it was; the reconciler and operators take over.
-      this.logger.error(`Could not settle session ${event.sessionId}`, (err as Error).stack);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error({
+        message: 'Session settlement failed',
+        event: 'settlement.failed',
+        requestId: event.requestId,
+        sessionId: event.sessionId,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        },
+      });
     }
   }
 

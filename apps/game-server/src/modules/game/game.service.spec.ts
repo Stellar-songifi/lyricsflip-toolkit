@@ -65,7 +65,7 @@ function createMockSessionsRepo() {
 }
 
 /** An in-memory stand-in for the TypeORM repository, so this needs no Postgres. */
-function setup(roundsPerSession: number) {
+function setup(roundsPerSession: number, requestId?: string) {
   const repo = createMockSessionsRepo();
   const lyrics = { getRandom: jest.fn(async () => LYRIC), findById: jest.fn(async () => LYRIC) };
   const users = { awardXp: jest.fn(async () => undefined) };
@@ -78,6 +78,7 @@ function setup(roundsPerSession: number) {
     users as never,
     events as never,
     config as never,
+    { requestId } as never,
   );
   return { service, repo, lyrics, users, events, config };
 }
@@ -223,6 +224,22 @@ describe('GameService restart persistence (issue #2)', () => {
 });
 
 describe('GameService submitGuess concurrency (issues #27, #28)', () => {
+  it('threads the request id into both asynchronous domain events', async () => {
+    const { service, events } = setup(1, 'request-123');
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 1 });
+
+    await service.submitGuess(session.id, 'host', 'Thrift Shop');
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'game.session.finished',
+      expect.objectContaining({ requestId: 'request-123' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'guess.submitted',
+      expect.objectContaining({ requestId: 'request-123' }),
+    );
+  });
+
   it('sums every awarded point exactly once under 20 concurrent guesses', async () => {
     const { service, events } = setup(20);
     const session = await service.createSession('host', GameMode.SOLO, { rounds: 20 });

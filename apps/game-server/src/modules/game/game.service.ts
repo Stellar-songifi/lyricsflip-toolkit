@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +14,7 @@ import { LyricsService } from '../lyrics/lyrics.service';
 import { UsersService } from '../users/users.service';
 import { GuessOutcome, scoreGuess } from './scoring';
 import type { AppConfig } from '../../config/configuration';
+import { RequestContext } from '../../config/request-context';
 
 export interface PublicLyric {
   id: string;
@@ -33,6 +35,7 @@ export interface GuessResult {
 
 /** Emitted once, by the server, when a session's last round is scored. */
 export interface SessionFinishedEvent {
+  requestId?: string;
   sessionId: string;
   mode: GameMode;
   playerIds: string[];
@@ -65,6 +68,7 @@ export class GameService {
     private readonly usersService: UsersService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AppConfig, true>,
+    @Optional() private readonly requestContext?: RequestContext,
   ) {}
 
   /**
@@ -251,6 +255,7 @@ export class GameService {
       // listens for this. See SettlementListener. Built from the row just
       // committed, not from in-memory state a later guess may have changed.
       const finished: SessionFinishedEvent = {
+        requestId: this.requestContext?.requestId,
         sessionId,
         mode: session.mode,
         playerIds: [...session.playerIds],
@@ -260,6 +265,7 @@ export class GameService {
     }
 
     this.eventEmitter.emit('guess.submitted', {
+      requestId: this.requestContext?.requestId,
       sessionId,
       userId,
       outcome: finalOutcome,
