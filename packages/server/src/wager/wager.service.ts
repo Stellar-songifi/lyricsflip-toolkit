@@ -10,7 +10,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { InvalidAmountError, assertPositiveStroops } from '@lyricsflip-toolkit/sdk';
-import { ESCROW_GATEWAY, EscrowGateway, SubmitOutcome, UnsignedStake } from '../escrow/escrow.gateway';
+import {
+  ESCROW_GATEWAY,
+  EscrowGateway,
+  SubmitOutcome,
+  UnsignedStake,
+  UnsignedStakeAuth,
+} from '../escrow/escrow.gateway';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
 import { WalletLinkService } from '../wallet/wallet-link.service';
 import { PvpEvent } from './wager.events';
@@ -179,6 +185,34 @@ export class WagerService {
       playerId,
       signedTransactionXdr,
     );
+    return this.recordStakeOutcome(wager, side, outcome);
+  }
+
+  /**
+   * Builds the authorisation entry a smart wallet signs to stake (#62); the
+   * server relays it, so the wallet needs no XLM and signs no transaction.
+   */
+  async buildStakeAuth(wagerId: string, playerId: string): Promise<UnsignedStakeAuth> {
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+    if (!this.escrow.buildStakeAuth) {
+      throw new BadRequestException('This settlement mode does not relay stake authorisations');
+    }
+    return this.escrow.buildStakeAuth(wager.id, this.addressOf(wager, side));
+  }
+
+  /** Submits a player's signed stake authorisation entry (#62). */
+  async submitStakeAuth(wagerId: string, playerId: string, signedAuthEntryXdr: string): Promise<Wager> {
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+    if (!this.escrow.submitStakeAuth) {
+      throw new BadRequestException('This settlement mode does not relay stake authorisations');
+    }
+    const outcome = await this.escrow.submitStakeAuth(wager.id, this.addressOf(wager, side), signedAuthEntryXdr);
+    return this.recordStakeOutcome(wager, side, outcome);
+  }
+
+  private async recordStakeOutcome(wager: Wager, side: 'A' | 'B', outcome: SubmitOutcome): Promise<Wager> {
     if (outcome.txHash) {
       await this.wagers.update(
         { id: wager.id },

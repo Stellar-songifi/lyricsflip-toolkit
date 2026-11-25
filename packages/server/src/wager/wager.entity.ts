@@ -12,6 +12,13 @@ import {
  *
  * - `cancelled`: ended before any money moved (declined, or never accepted).
  * - `failed`: needs an operator; `failureReason` says why.
+ *
+ * Postgres enforces the row invariants with CHECK constraints:
+ * `CHK_pvp_wagers_distinct_players` (from `CreatePvpTables1760000000000`), and
+ * from `AddWagerInvariantChecks1760000000002`: `CHK_pvp_wagers_stake_amount`,
+ * `CHK_pvp_wagers_settlement_kind`,
+ * `CHK_pvp_wagers_won`, `CHK_pvp_wagers_winner_kind`,
+ * `CHK_pvp_wagers_winner_player` and `CHK_pvp_wagers_reconcile_attempts`.
  */
 export enum WagerStatus {
   PENDING = 'pending',
