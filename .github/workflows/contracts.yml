@@ -19,7 +19,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Rust toolchain is pinned to an explicit version for reproducibility.
       # To bump: update the `toolchain` value below (and any matching

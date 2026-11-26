@@ -55,7 +55,7 @@ jobs:
     env:
       PVP_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pinned to an explicit tag rather than `latest`: the Stellar Core/RPC
       # version the integration suite runs against must be reproducible for a

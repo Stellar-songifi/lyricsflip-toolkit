@@ -23,7 +23,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -50,7 +50,7 @@ jobs:
   openapi-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -90,7 +90,7 @@ jobs:
       PVP_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_test
       E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -140,7 +140,7 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/lyricsflip_migrations
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
