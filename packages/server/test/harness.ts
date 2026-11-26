@@ -175,4 +175,59 @@ export async function twoLinkedPlayers(h: Harness) {
   return { alice, bob };
 }
 
+/**
+ * Fires several `link` calls for the same player concurrently and returns the
+ * settled results (never rejects). Useful for asserting that concurrent
+ * verifies don't produce a `500` and leave exactly one valid link.
+ */
+export async function linkConcurrently(
+  h: Harness,
+  playerId: string,
+  addresses: string[],
+): Promise<PromiseSettledResult<unknown>[]> {
+  return Promise.allSettled(addresses.map((address) => h.links.link(playerId, address)));
+}
+
+/**
+ * Installs a temporary trigger on `pvp_wallet_links` that makes any INSERT or
+ * UPDATE fail, so a test can assert that a failed save leaves the previous
+ * link row intact. Returns a function that removes the trigger again.
+ */
+export async function failWalletLinkWrites(h: Harness): Promise<() => Promise<void>> {
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 12);
+  const fnName = `fail_wallet_link_write_${suffix}`;
+  const triggerName = `fail_wallet_link_write_${suffix}`;
+  await h.dataSource.query(`
+    CREATE OR REPLACE FUNCTION ${fnName}() RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'injected wallet link write failure';
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await h.dataSource.query(`
+    CREATE TRIGGER ${triggerName}
+    BEFORE INSERT OR UPDATE ON pvp_wallet_links
+    FOR EACH ROW EXECUTE FUNCTION ${fnName}();
+  `);
+  return async () => {
+    await h.dataSource.query(`DROP TRIGGER IF EXISTS ${triggerName} ON pvp_wallet_links`);
+    await h.dataSource.query(`DROP FUNCTION IF EXISTS ${fnName}()`);
+  };
+}
+
+/**
+ * Reads the raw wallet link rows for a player directly from the database, so
+ * tests can assert on row counts and preserved addresses.
+ */
+export async function walletLinkRows(
+  h: Harness,
+  playerId: string,
+): Promise<Array<{ playerId: string; address: string }>> {
+  const rows = await h.dataSource.query(
+    `SELECT "playerId", "address" FROM pvp_wallet_links WHERE "playerId" = $1`,
+    [playerId],
+  );
+  return rows.map((row: any) => ({ playerId: row.playerId, address: row.address }));
+}
+
 export const STAKE = '50000000';
