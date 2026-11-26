@@ -54,6 +54,15 @@ export interface UnsignedStake {
   networkPassphrase: string;
 }
 
+/** A stake authorisation entry for a smart wallet (or other relayed player) to sign. */
+export interface UnsignedStakeAuth {
+  /** Base64 `SorobanAuthorizationEntry` for the player to sign. */
+  authEntryXdr: string;
+  /** Last ledger at which the signature will be accepted. */
+  expirationLedger: number;
+  networkPassphrase: string;
+}
+
 /**
  * The on-chain side of settlement: one method per `pvp-escrow` call.
  *
@@ -82,6 +91,19 @@ export interface EscrowGateway {
     playerId: string,
     signedTransactionXdr: string | null,
   ): Promise<SubmitOutcome>;
+
+  /**
+   * Relayed stakes (#62): builds the player's authorisation entry for
+   * `stake(potId, player)`, for a smart wallet that signs auth entries rather
+   * than transactions. Absent on gateways that don't support relaying.
+   */
+  buildStakeAuth?(potId: string, player: string): Promise<UnsignedStakeAuth>;
+
+  /**
+   * Relayed stakes (#62): checks that `signedAuthEntryXdr` authorises exactly
+   * `stake(potId, player)`, attaches it, and submits from a server account.
+   */
+  submitStakeAuth?(potId: string, player: string, signedAuthEntryXdr: string): Promise<SubmitOutcome>;
 
   resolve(potId: string, winner: string): Promise<SubmitOutcome>;
 

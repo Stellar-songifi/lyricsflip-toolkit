@@ -90,6 +90,8 @@ pub enum DataKey {
     FeeBps,
     /// Receives the platform fee (`set_fee`).
     FeeRecipient,
+    /// Set while the admin has paused new matches (`pause`).
+    Paused,
 }
 
 #[contracterror]
@@ -117,6 +119,8 @@ pub enum Error {
     NoPendingAdmin = 18,
     /// `set_fee` above `MAX_FEE_BPS`, or a nonzero fee with no recipient.
     InvalidFee = 19,
+    /// `open_pot` and `stake` are refused while the admin has paused the contract.
+    Paused = 17,
 }
 
 /// Published by `open_pot`.
@@ -204,6 +208,27 @@ pub struct RoleChanged {
     #[topic]
     pub role: soroban_sdk::Symbol,
     pub address: Address,
+}
+
+/// Published by `pause`: no new pots or stakes until `unpause`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    pub admin: Address,
+}
+
+/// Published by `unpause`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Unpaused {
+    pub admin: Address,
+}
+
+/// Published by `upgrade` with the hash of the Wasm now running.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Upgraded {
+    pub new_wasm_hash: BytesN<32>,
 }
 
 #[contract]
@@ -306,6 +331,41 @@ impl PvpEscrow {
         Ok(())
     }
 
+    /// Stops new matches: `open_pot` and `stake` fail with `Error::Paused`
+    /// until `unpause`. `resolve`, `refund` and `claim_refund` keep working, so
+    /// pots already open can still be settled or returned. Admin only.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Paused { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Lifts `pause`. Admin only.
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        env.storage().instance().remove(&DataKey::Paused);
+        Unpaused { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// True while new pots and stakes are refused.
+    pub fn is_paused(env: Env) -> bool {
+        Self::paused(&env)
+    }
+
+    /// Replaces this contract's code with already-uploaded Wasm
+    /// (`stellar contract upload`), keeping its address, storage and balance.
+    /// Admin only. Only storage-compatible changes may ship this way: see
+    /// `docs/upgrade.md`.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        Self::require_admin(&env)?;
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        Upgraded { new_wasm_hash }.publish(&env);
+        Ok(())
+    }
+
     /// Opens a pot for a match. Called by the game server after both players
     /// have agreed to an equal stake; no funds move yet. After
     /// `timeout_ledgers` ledgers the pot times out (see `claim_refund`).
@@ -318,6 +378,7 @@ impl PvpEscrow {
         timeout_ledgers: u32,
     ) -> Result<(), Error> {
         Self::require_resolver(&env)?;
+        Self::require_not_paused(&env)?;
 
         if !(MIN_TIMEOUT_LEDGERS..=MAX_TIMEOUT_LEDGERS).contains(&timeout_ledgers) {
             return Err(Error::InvalidTimeout);
@@ -364,6 +425,7 @@ impl PvpEscrow {
     /// players have staked, the pot moves to `Staked`.
     pub fn stake(env: Env, session_id: BytesN<16>, player: Address) -> Result<(), Error> {
         player.require_auth();
+        Self::require_not_paused(&env)?;
 
         let mut pot = Self::load_pot(&env, &session_id)?;
         if pot.status != PotStatus::Open {
@@ -581,6 +643,20 @@ impl PvpEscrow {
         Ok(admin)
     }
 
+    fn paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), Error> {
+        if Self::paused(env) {
+            return Err(Error::Paused);
+        }
+        Ok(())
+    }
+
     /// Requires the stored resolver's authorisation. The resolver is never
     /// taken from arguments, so a caller can't name themselves as resolver.
     fn require_resolver(env: &Env) -> Result<(), Error> {
@@ -642,4 +718,5 @@ impl PvpEscrow {
 }
 
 mod proptest_model;
+mod cost;
 mod test;

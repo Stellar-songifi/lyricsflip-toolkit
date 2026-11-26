@@ -12,6 +12,13 @@ import {
  *
  * - `cancelled`: ended before any money moved (declined, or never accepted).
  * - `failed`: needs an operator; `failureReason` says why.
+ *
+ * Postgres enforces the row invariants with CHECK constraints:
+ * `CHK_pvp_wagers_distinct_players` (from `CreatePvpTables1760000000000`), and
+ * from `AddWagerInvariantChecks1760000000002`: `CHK_pvp_wagers_stake_amount`,
+ * `CHK_pvp_wagers_settlement_kind`,
+ * `CHK_pvp_wagers_won`, `CHK_pvp_wagers_winner_kind`,
+ * `CHK_pvp_wagers_winner_player` and `CHK_pvp_wagers_reconcile_attempts`.
  */
 export enum WagerStatus {
   PENDING = 'pending',
@@ -53,10 +60,12 @@ export class Wager {
   matchId: string;
 
   /** The player who proposed the wager. */
+  @Index('IDX_pvp_wagers_playerAId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerAId: string;
 
   /** The invited player. Nothing is asked of them until they accept. */
+  @Index('IDX_pvp_wagers_playerBId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerBId: string;
 
@@ -110,6 +119,15 @@ export class Wager {
 
   @Column({ type: 'integer', default: 0 })
   reconcileAttempts: number;
+
+  /**
+   * When the reconciler may next attempt this wager. `null` means "due now"
+   * (never attempted, or explicitly reset). Set by the reconciler's backoff
+   * policy so retry timing does not depend on `updatedAt` or sweep cadence.
+   */
+  @Index()
+  @Column({ type: 'timestamptz', nullable: true })
+  nextAttemptAt: Date | null;
 
   @Column({ type: 'text', nullable: true })
   failureReason: string | null;

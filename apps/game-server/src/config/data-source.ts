@@ -25,3 +25,10 @@ export const AppDataSource = new DataSource({
   migrations: [__dirname + '/../database/migrations/*.{ts,js}', ...PVP_MIGRATIONS],
   synchronize: false,
 });
+
+// Default export so the TypeORM CLI (`typeorm-ts-node-commonjs -d src/config/data-source.ts`)
+// can load this file directly for `migration:run`, `migration:generate`, and `schema:log`.
+// This is what the CI drift check relies on: run all migrations against a fresh database,
+// then run `schema:log` and fail if it proposes any further changes.
+export default AppDataSource;
+</｜｜DSML｜｜ parameter>

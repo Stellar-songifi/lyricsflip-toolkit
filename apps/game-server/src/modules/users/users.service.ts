@@ -3,6 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LEVEL_THRESHOLDS, PlayerLevel, User } from './entities/user.entity';
 
+export const LEADERBOARD_DEFAULT_LIMIT = 20;
+export const LEADERBOARD_MAX_LIMIT = 100;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -47,11 +50,33 @@ export class UsersService {
     return user;
   }
 
-  async getLeaderboard(limit = 20): Promise<User[]> {
+  async getLeaderboard(limit = LEADERBOARD_DEFAULT_LIMIT): Promise<User[]> {
+    const safeLimit = Number.isFinite(limit)
+      ? Math.min(Math.max(Math.trunc(limit), 1), LEADERBOARD_MAX_LIMIT)
+      : LEADERBOARD_DEFAULT_LIMIT;
     return this.usersRepository.find({
       order: { xp: 'DESC' },
-      take: limit,
+      take: safeLimit,
     });
+  }
+
+  /** Returns the top `limit` players ranked by XP earned in the current UTC week (Mon 00:00 → Sun 23:59). */
+  async getWeeklyLeaderboard(limit = 20): Promise<{ userId: string; displayName: string | null; xpThisWeek: number }[]> {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay(); // 0 = Sun
+    const daysFromMonday = (dayOfWeek + 6) % 7;
+    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysFromMonday));
+
+    return this.usersRepository
+      .createQueryBuilder('u')
+      .select('u.id', 'userId')
+      .addSelect('u.displayName', 'displayName')
+      .addSelect('COALESCE(SUM(xe.xp), 0)::int', 'xpThisWeek')
+      .leftJoin('xp_event', 'xe', 'xe.userId = u.id AND xe.createdAt >= :weekStart', { weekStart })
+      .groupBy('u.id')
+      .orderBy('"xpThisWeek"', 'DESC')
+      .limit(limit)
+      .getRawMany();
   }
 
   /** Awards XP/score for a guess and recomputes the player's level. */

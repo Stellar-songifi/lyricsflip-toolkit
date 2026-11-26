@@ -1,0 +1,10 @@
+appId: com.stellarsongifi.lyricsflip
+---
+- runFlow: subflows/sign-in.yaml
+- tapOn: "Daily challenge"
+- assertVisible: "Daily"
+- assertVisible: "Song title or artist"
+- tapOn: "Song title or artist"
+- inputText: "Firework"
+- tapOn: "Guess"
+- assertVisible: "points"
