@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import { Body, Button, ErrorText, Screen, Title, styles as ui } from '../../src/components/ui';
 import { useSession } from '../../src/lib/session';
 import { getTestTokens } from '../../src/lib/test-tokens';
@@ -8,6 +9,7 @@ import { colors, spacing } from '../../src/lib/theme';
 
 export default function Profile() {
   const { user, wallet, api, refreshUser, signOut } = useSession();
+  const router = useRouter();
   const [username, setUsername] = useState(user?.username ?? '');
   const [error, setError] = useState<string | null>(null);
   const [tokens, setTokens] = useState<string | null>(null);
@@ -59,7 +61,14 @@ export default function Profile() {
         {user.correctGuesses} correct · {user.gamesPlayed} games
       </Body>
 
-      <TextInput style={ui.input} value={username} onChangeText={setUsername} autoCapitalize="none" />
+      <Button label="Match history" variant="secondary" onPress={() => router.push('/match-history')} />
+      <TextInput
+        style={ui.input}
+        accessibilityLabel="Username"
+        value={username}
+        onChangeText={setUsername}
+        autoCapitalize="none"
+      />
       <Button label="Change username" variant="secondary" onPress={save} />
       <ErrorText>{error}</ErrorText>
 

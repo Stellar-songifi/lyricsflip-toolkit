@@ -5,6 +5,7 @@ import { ResolverKeyProvider } from './resolver-secret';
 
 /** Ledgers (~5s each) a smart wallet has to sign and return a stake authorisation. */
 const STAKE_AUTH_VALID_LEDGERS = 60;
+import { toUserFacingError } from '../wager/wager.errors';
 import {
   InvalidStakeAuthError,
   InvalidStakeEnvelopeError,
@@ -111,7 +112,10 @@ export class StellarEscrowGateway implements EscrowGateway {
       );
       return { transactionXdr: transaction.toXDR(), networkPassphrase: this.config.networkPassphrase };
     } catch (err) {
-      throw new BadRequestException(`Could not build the stake transaction: ${(err as Error).message}`);
+      // The SDK message can echo an RPC URL or raw XDR; keep it server-side only.
+      this.logger.warn(`buildStake failed for pot ${potId}: ${(err as Error).message}`);
+      const mapped = toUserFacingError(err);
+      throw new BadRequestException({ code: mapped.code, message: mapped.message });
     }
   }
 
@@ -136,8 +140,15 @@ export class StellarEscrowGateway implements EscrowGateway {
       transaction = this.client.rpc.fromXdr(signedTransactionXdr);
       this.client.assertIsStake(transaction, potId, player);
     } catch (err) {
-      if (err instanceof InvalidStakeEnvelopeError) throw new BadRequestException(err.message);
-      throw new BadRequestException('Not a valid signed transaction envelope');
+      this.logger.warn(`submitStake rejected the envelope for pot ${potId}: ${(err as Error).message}`);
+      if (err instanceof InvalidStakeEnvelopeError) {
+        const mapped = toUserFacingError(err);
+        throw new BadRequestException({ code: mapped.code, message: mapped.message });
+      }
+      throw new BadRequestException({
+        code: 'INVALID_STAKE_ENVELOPE',
+        message: 'Not a valid signed transaction envelope',
+      });
     }
     return toOutcome(await this.client.rpc.submit(transaction));
   }

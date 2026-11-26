@@ -60,10 +60,12 @@ export class Wager {
   matchId: string;
 
   /** The player who proposed the wager. */
+  @Index('IDX_pvp_wagers_playerAId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerAId: string;
 
   /** The invited player. Nothing is asked of them until they accept. */
+  @Index('IDX_pvp_wagers_playerBId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerBId: string;
 
@@ -117,6 +119,15 @@ export class Wager {
 
   @Column({ type: 'integer', default: 0 })
   reconcileAttempts: number;
+
+  /**
+   * When the reconciler may next attempt this wager. `null` means "due now"
+   * (never attempted, or explicitly reset). Set by the reconciler's backoff
+   * policy so retry timing does not depend on `updatedAt` or sweep cadence.
+   */
+  @Index()
+  @Column({ type: 'timestamptz', nullable: true })
+  nextAttemptAt: Date | null;
 
   @Column({ type: 'text', nullable: true })
   failureReason: string | null;

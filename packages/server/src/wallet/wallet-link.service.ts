@@ -32,28 +32,62 @@ export class WalletLinkService {
   /**
    * Links `address` to `playerId`. Refused if the wallet belongs to another
    * player, or if the player would switch wallets with a wager in flight.
+   *
+   * The whole operation runs in a single transaction that locks the player's
+   * link row, so concurrent verifies serialize and a failed upsert never
+   * leaves the player without a wallet.
    */
   async link(playerId: string, address: string): Promise<WalletLink> {
-    const owner = await this.findPlayerByAddress(address);
-    if (owner && owner !== playerId) {
-      throw new ConflictException('This wallet is already linked to another account');
-    }
-    const existing = await this.links.findOne({ where: { playerId } });
-    if (existing?.address === address) {
-      return existing;
-    }
-    if (existing) {
-      const inFlight = await this.wagers.count({
-        where: [
-          { playerAId: playerId, status: In(IN_FLIGHT) },
-          { playerBId: playerId, status: In(IN_FLIGHT) },
-        ],
-      });
-      if (inFlight > 0) {
-        throw new ConflictException("You can't change wallets while a wager is in progress");
+    return this.links.manager.transaction(async (manager) => {
+      // Lock the player's link row (no-op if none exists yet; the upsert below
+      // serializes on the unique playerId constraint).
+      const existing = await manager
+        .createQueryBuilder(WalletLink, 'l')
+        .setLock('pessimistic_write')
+        .where('l.playerId = :playerId', { playerId })
+        .getOne();
+
+      const owner = await manager.findOne(WalletLink, { where: { address } });
+      if (owner && owner.playerId !== playerId) {
+        throw new ConflictException('This wallet is already linked to another account');
       }
-      await this.links.delete({ playerId });
-    }
-    return this.links.save(this.links.create({ playerId, address }));
+
+      if (existing?.address === address) {
+        return existing;
+      }
+
+      if (existing) {
+        const inFlight = await manager.count(Wager, {
+          where: [
+            { playerAId: playerId, status: In(IN_FLIGHT) },
+            { playerBId: playerId, status: In(IN_FLIGHT) },
+          ],
+        });
+        if (inFlight > 0) {
+          throw new ConflictException("You can't change wallets while a wager is in progress");
+        }
+      }
+
+      try {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(WalletLink)
+          .values({ playerId, address })
+          .orUpdate(['address'], ['playerId'])
+          .execute();
+      } catch (error) {
+        if ((error as { code?: string })?.code === '23505') {
+          throw new ConflictException('This wallet is already linked to another account');
+        }
+        throw error;
+      }
+
+      const linked = await manager.findOne(WalletLink, { where: { playerId } });
+      if (!linked) {
+        throw new ConflictException('Failed to link wallet');
+      }
+      return linked;
+    });
   }
 }
