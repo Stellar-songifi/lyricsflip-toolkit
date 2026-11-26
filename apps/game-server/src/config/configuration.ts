@@ -18,6 +18,10 @@ export interface AppConfig {
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string | null;
   /**
+   * Whether the Swagger UI at `/api/docs` is served. `SWAGGER_ENABLED`,
+   * default `true` outside production and `false` in production.
+   */
+  swaggerEnabled: boolean;
    * Express `trust proxy` setting. Behind a load balancer this must be set so
    * rate limiting sees the real client IP. `TRUST_PROXY`, default `false`.
    */
@@ -169,6 +173,10 @@ export default (): AppConfig => {
     throw new Error('CORS_ORIGIN must be explicitly set to a specific origin in production mode');
   }
 
+  // Publishing the full API surface is a deliberate choice, so Swagger is off
+  // by default in production and on everywhere else.
+  const swaggerEnabled =
+    (process.env.SWAGGER_ENABLED ?? (nodeEnv === 'production' ? 'false' : 'true')) === 'true';
   const jwtSecret = required('JWT_SECRET');
   validateJwtSecret(jwtSecret, nodeEnv);
 
@@ -203,6 +211,7 @@ export default (): AppConfig => {
     roundsPerSession,
     roundSeconds,
     corsOrigin,
+    swaggerEnabled,
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     jwt: {
       secret: jwtSecret,
