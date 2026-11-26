@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { DailyChallenge } from './entities/daily-challenge.entity';
 import { DailyAttempt } from './entities/daily-attempt.entity';
 import { Lyric } from '../lyrics/entities/lyric.entity';
@@ -10,6 +10,8 @@ import { GuessOutcome, scoreGuess } from '../game/scoring';
 import { pickDeterministic, utcDay } from './daily-seed';
 
 export const DAILY_LYRIC_COUNT = 5;
+/** How many previous days' picks to keep out of today's pool. */
+export const DAILY_RECENT_DAYS = 7;
 
 export interface DailyView {
   date: string;
@@ -43,12 +45,27 @@ export class DailyService {
   async lyricIdsFor(date = utcDay()): Promise<string[]> {
     const existing = await this.days.findOne({ where: { date } });
     if (existing) return existing.lyricIds;
+
     const all = await this.lyricsRepo.find({ select: { id: true } });
-    const lyricIds = pickDeterministic(
-      all.map((l) => l.id),
-      DAILY_LYRIC_COUNT,
-      date,
-    );
+    const allIds = all.map((l) => l.id);
+    if (allIds.length < DAILY_LYRIC_COUNT) {
+      // A too-small catalog can't fill a day; surface it loudly instead of
+      // shipping a "complete" day with fewer than DAILY_LYRIC_COUNT lyrics.
+      throw new Error(
+        `Not enough lyrics to build a daily challenge: need ${DAILY_LYRIC_COUNT}, have ${allIds.length}`,
+      );
+    }
+
+    // Keep the last DAILY_RECENT_DAYS of picks out of today's pool so the same
+    // lyric doesn't reappear day after day.
+    const recent = await this.days.find({
+      where: { date: LessThan(date) },
+      order: { date: 'DESC' },
+      take: DAILY_RECENT_DAYS,
+    });
+    const exclude = recent.flatMap((d) => d.lyricIds);
+
+    const lyricIds = pickDeterministic(allIds, DAILY_LYRIC_COUNT, date, exclude);
     // Another request may have fixed the day first; keep whichever landed.
     await this.days.createQueryBuilder().insert().values({ date, lyricIds }).orIgnore().execute();
     return (await this.days.findOneOrFail({ where: { date } })).lyricIds;

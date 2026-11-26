@@ -144,3 +144,81 @@ describe('challenges schema', () => {
     expect(onCode?.unique).toBe(true);
   });
 });
+
+import { ForbiddenException } from '@nestjs/common';
+
+function pendingChallenge(overrides: Partial<Challenge> = {}): Challenge {
+  return {
+    id: 'c1',
+    code: 'ABC123',
+    hostUserId: 'host',
+    invitedUserId: null,
+    stakeAmount: null,
+    status: ChallengeStatus.PENDING,
+    gameSessionId: null,
+    wagerId: null,
+    expiresAt: new Date(Date.now() + 60_000),
+    createdAt: new Date(),
+    ...overrides,
+  } as Challenge;
+}
+
+function setupCancel(challenge: Challenge) {
+  const repo = {
+    findOne: jest.fn(async () => challenge),
+    update: jest.fn(async () => ({ affected: 1 })),
+  };
+  const users = {
+    findById: jest.fn(async () => ({ id: challenge.hostUserId, username: 'hostie' })),
+    findByUsername: jest.fn(async () => null),
+  };
+  const notifications = { push: jest.fn(async () => undefined) };
+  const service = new ChallengesService(
+    repo as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    users as never,
+    notifications as never,
+  );
+  return { service, repo, users, notifications };
+}
+
+describe('ChallengesService cancel (issue #105)', () => {
+  it('lets the host cancel a pending challenge', async () => {
+    const { service, repo } = setupCancel(pendingChallenge());
+
+    const summary = await service.cancel('ABC123', 'host');
+
+    expect(summary.status).toBe(ChallengeStatus.CANCELLED);
+    expect(repo.update).toHaveBeenCalledWith(
+      { id: 'c1', status: ChallengeStatus.PENDING },
+      { status: ChallengeStatus.CANCELLED },
+    );
+  });
+
+  it('rejects a non-host cancel with 403', async () => {
+    const { service } = setupCancel(pendingChallenge());
+
+    await expect(service.cancel('ABC123', 'intruder')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('notifies the invited player when the host cancels', async () => {
+    const { service, notifications } = setupCancel(pendingChallenge({ invitedUserId: 'friend' }));
+
+    await service.cancel('ABC123', 'host');
+
+    expect(notifications.push).toHaveBeenCalledWith(
+      'friend',
+      'challenge.cancel',
+      expect.stringContaining('cancelled'),
+      expect.objectContaining({ code: 'ABC123' }),
+    );
+  });
+
+  it('makes a later accept fail with a clear cancelled message', async () => {
+    const { service } = setupCancel(pendingChallenge({ status: ChallengeStatus.CANCELLED }));
+
+    await expect(service.accept('ABC123', 'joiner')).rejects.toThrow(/cancelled/);
+  });
+});

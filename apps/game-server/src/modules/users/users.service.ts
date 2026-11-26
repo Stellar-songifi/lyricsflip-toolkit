@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LEVEL_THRESHOLDS, PlayerLevel, User } from './entities/user.entity';
+import { isUniqueViolation } from '../../common/db-errors';
 
 @Injectable()
 export class UsersService {
@@ -35,16 +36,45 @@ export class UsersService {
     return this.findById(id);
   }
 
+  /**
+   * Finds the user for a wallet, creating one on first sign-in.
+   *
+   * The username is derived deterministically from the wallet. Two different
+   * wallets can share a short prefix, so a plain `player_<first 6>` is not
+   * guaranteed unique; on a unique-constraint violation we retry with a longer,
+   * still-deterministic slice of the same wallet until one is free.
+   */
   async findOrCreateByWallet(walletAddress: string): Promise<User> {
-    let user = await this.usersRepository.findOne({ where: { walletAddress } });
-    if (!user) {
-      user = this.usersRepository.create({
-        walletAddress,
-        username: `player_${walletAddress.slice(0, 6).toLowerCase()}`,
-      });
-      user = await this.usersRepository.save(user);
+    const existing = await this.usersRepository.findOne({ where: { walletAddress } });
+    if (existing) {
+      return existing;
     }
-    return user;
+
+    const candidates = this.usernameCandidates(walletAddress);
+    let lastError: unknown;
+    for (const username of candidates) {
+      const user = this.usersRepository.create({ walletAddress, username });
+      try {
+        return await this.usersRepository.save(user);
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        lastError = err;
+      }
+    }
+    // Every deterministic candidate collided (e.g. a concurrent sign-in for the
+    // same wallet); surface the last violation rather than a plain Error.
+    throw lastError;
+  }
+
+  /** Deterministic usernames to try, shortest (most collision-prone) first. */
+  private usernameCandidates(walletAddress: string): string[] {
+    const lower = walletAddress.toLowerCase();
+    return [
+      `player_${lower.slice(0, 6)}`,
+      `player_${lower.slice(0, 10)}`,
+      `player_${lower.slice(0, 14)}`,
+      `player_${lower}`,
+    ];
   }
 
   async getLeaderboard(limit = 20): Promise<User[]> {

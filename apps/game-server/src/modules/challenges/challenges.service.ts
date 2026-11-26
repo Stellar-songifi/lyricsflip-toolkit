@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -14,12 +15,11 @@ import { WagerService, WalletLinkService, fromStroops } from '@lyricsflip-toolki
 import { UsersService } from '../users/users.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { deepLink } from '../notifications/deep-links';
+import { isUniqueViolation } from '../../common/db-errors';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — easy to read aloud
 const CODE_LENGTH = 6;
 const CHALLENGE_TTL_MS = 15 * 60 * 1000;
-/** PostgreSQL SQLSTATE for a unique-constraint violation. */
-const UNIQUE_VIOLATION = '23505';
 /** One insert, plus a single retry on collision. */
 const CODE_INSERT_ATTEMPTS = 2;
 
@@ -28,16 +28,6 @@ type NewChallenge = Pick<
   Challenge,
   'hostUserId' | 'stakeAmount' | 'invitedUserId' | 'status' | 'expiresAt'
 >;
-
-/**
- * PostgreSQL reports a unique-constraint violation as SQLSTATE 23505. TypeORM
- * wraps the driver error in a `QueryFailedError`, and which level carries the
- * code has moved between versions, so check both.
- */
-function isUniqueViolation(err: unknown): boolean {
-  const error = err as { code?: string; driverError?: { code?: string } } | null;
-  return (error?.code ?? error?.driverError?.code) === UNIQUE_VIOLATION;
-}
 
 export interface ChallengeSummary {
   code: string;
@@ -121,6 +111,9 @@ export class ChallengesService {
     if (challenge.status === ChallengeStatus.ACCEPTED) {
       throw new BadRequestException('This challenge has already been accepted');
     }
+    if (challenge.status === ChallengeStatus.CANCELLED) {
+      throw new BadRequestException('This challenge has been cancelled');
+    }
     if (challenge.hostUserId === joinerUserId) {
       throw new BadRequestException("You can't accept your own challenge");
     }
@@ -164,6 +157,50 @@ export class ChallengesService {
     );
 
     return { gameSessionId: session.id, wagerId };
+  }
+
+  /**
+   * The host cancels a still-pending challenge. Only the host may cancel, and
+   * only while the challenge is `pending` — an accepted or expired challenge is
+   * left alone. The invited player (if any) is notified.
+   */
+  async cancel(code: string, hostUserId: string): Promise<ChallengeSummary> {
+    const challenge = await this.expireIfDue(await this.loadByCode(code));
+
+    if (challenge.hostUserId !== hostUserId) {
+      throw new ForbiddenException('Only the host can cancel this challenge');
+    }
+    if (challenge.status === ChallengeStatus.ACCEPTED) {
+      throw new BadRequestException('This challenge has already been accepted');
+    }
+    if (challenge.status === ChallengeStatus.EXPIRED) {
+      throw new BadRequestException('This challenge has expired');
+    }
+    if (challenge.status === ChallengeStatus.CANCELLED) {
+      throw new BadRequestException('This challenge has already been cancelled');
+    }
+
+    // Conditional update so a concurrent accept can't be overwritten.
+    const cancelled = await this.challengesRepository.update(
+      { id: challenge.id, status: ChallengeStatus.PENDING },
+      { status: ChallengeStatus.CANCELLED },
+    );
+    if (!cancelled.affected) {
+      throw new BadRequestException('This challenge can no longer be cancelled');
+    }
+    challenge.status = ChallengeStatus.CANCELLED;
+
+    if (challenge.invitedUserId) {
+      const host = await this.users.findById(hostUserId);
+      await this.notifications.push(
+        challenge.invitedUserId,
+        'challenge.cancel',
+        `${host.username} cancelled their challenge. Code ${challenge.code}.`,
+        { url: deepLink.challenge(challenge.code), code: challenge.code },
+      );
+    }
+
+    return this.toSummary(challenge);
   }
 
   /**

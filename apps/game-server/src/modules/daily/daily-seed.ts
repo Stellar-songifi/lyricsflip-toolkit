@@ -28,9 +28,21 @@ export function seededRandom(seed: number): () => number {
 /**
  * Picks `count` distinct ids, always the same ones for the same seed and
  * pool. The pool is sorted first so the caller's ordering can't matter.
+ *
+ * `exclude` lists ids to avoid (e.g. recently used lyrics). Exclusion is
+ * best-effort: if removing them would leave fewer than `count` candidates, the
+ * full pool is used so the day is still complete (repeats beat an empty day).
  */
-export function pickDeterministic(ids: string[], count: number, seed: string): string[] {
-  const pool = [...ids].sort();
+export function pickDeterministic(
+  ids: string[],
+  count: number,
+  seed: string,
+  exclude: Iterable<string> = [],
+): string[] {
+  const excluded = new Set(exclude);
+  const fresh = ids.filter((id) => !excluded.has(id));
+  const source = fresh.length >= count ? fresh : ids;
+  const pool = [...source].sort();
   const random = seededRandom(hashSeed(seed));
   const take = Math.min(count, pool.length);
   for (let i = 0; i < take; i++) {

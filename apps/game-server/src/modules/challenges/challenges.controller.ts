@@ -26,4 +26,9 @@ export class ChallengesController {
   accept(@Param('code') code: string, @CurrentUserId() userId: string) {
     return this.challengesService.accept(code, userId);
   }
+
+  @Post(':code/cancel')
+  cancel(@Param('code') code: string, @CurrentUserId() userId: string) {
+    return this.challengesService.cancel(code, userId);
+  }
 }

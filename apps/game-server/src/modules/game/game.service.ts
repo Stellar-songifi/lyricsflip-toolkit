@@ -24,6 +24,10 @@ export interface PublicLyric {
 export interface GuessResult {
   outcome: GuessOutcome;
   pointsAwarded: number;
+  /** XP actually credited after any solo cap; may be less than `pointsAwarded`. */
+  xpAwarded: number;
+  /** True when the solo XP cap reduced (or zeroed) this guess's XP. */
+  capHit: boolean;
   streak: number;
   nextLyric: PublicLyric | null;
   sessionStatus: GameSessionStatus;
@@ -202,7 +206,17 @@ export class GameService {
         session.currentStreak[userId] = 0;
       }
 
-      session.scores[userId] = (session.scores[userId] ?? 0) + finalPoints;
+      // Solo play is capped per session so grinding a single-player loop can't
+      // run away with the leaderboard. Head-to-head is uncapped. The game score
+      // still reflects the full points; only the XP credited is capped.
+      const alreadyAwarded = session.scores[userId] ?? 0;
+      const isSolo = session.mode === GameMode.SOLO;
+      const cap = this.configService.get('soloXpCap', { infer: true });
+      const remaining = isSolo ? Math.max(0, cap - alreadyAwarded) : finalPoints;
+      const xpAward = isSolo ? Math.min(finalPoints, remaining) : finalPoints;
+      const capHit = isSolo && xpAward < finalPoints;
+
+      session.scores[userId] = alreadyAwarded + finalPoints;
 
       let nextLyric: PublicLyric | null = null;
       let justFinished = false;
@@ -239,12 +253,12 @@ export class GameService {
         await manager.save(GameSession, session);
       }
 
-      return { session, finalOutcome, finalPoints, nextLyric, justFinished };
+      return { session, finalOutcome, finalPoints, xpAward, capHit, nextLyric, justFinished };
     });
 
-    const { session, finalOutcome, finalPoints, nextLyric, justFinished } = locked;
+    const { session, finalOutcome, finalPoints, xpAward, capHit, nextLyric, justFinished } = locked;
 
-    await this.usersService.awardXp(userId, finalPoints, finalOutcome !== GuessOutcome.MISS);
+    await this.usersService.awardXp(userId, xpAward, finalOutcome !== GuessOutcome.MISS);
 
     if (justFinished) {
       // The server, not a client, announces the end of a match; settlement
@@ -269,6 +283,8 @@ export class GameService {
     return {
       outcome: finalOutcome,
       pointsAwarded: finalPoints,
+      xpAwarded: xpAward,
+      capHit,
       streak: session.currentStreak[userId] ?? 0,
       nextLyric,
       sessionStatus: session.status,

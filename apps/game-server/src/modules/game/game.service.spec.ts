@@ -70,7 +70,9 @@ function setup(roundsPerSession: number) {
   const lyrics = { getRandom: jest.fn(async () => LYRIC), findById: jest.fn(async () => LYRIC) };
   const users = { awardXp: jest.fn(async () => undefined) };
   const events = { emit: jest.fn() };
-  const config = { get: jest.fn(() => roundsPerSession) };
+  const config = {
+    get: jest.fn((key: string) => (key === 'soloXpCap' ? 1000 : roundsPerSession)),
+  };
 
   const service = new GameService(
     repo as never,
@@ -240,5 +242,54 @@ describe('GameService submitGuess concurrency (issues #27, #28)', () => {
       ([eventName]) => eventName === 'game.session.finished',
     );
     expect(finishEmissions).toHaveLength(1);
+  });
+});
+
+describe('GameService solo XP cap (issue #99)', () => {
+  function setupWithCap(soloXpCap: number) {
+    const repo = createMockSessionsRepo();
+    const lyrics = { getRandom: jest.fn(async () => LYRIC), findById: jest.fn(async () => LYRIC) };
+    const users = { awardXp: jest.fn(async () => undefined) };
+    const events = { emit: jest.fn() };
+    const config = {
+      get: jest.fn((key: string) => (key === 'soloXpCap' ? soloXpCap : 10)),
+    };
+    const service = new GameService(
+      repo as never,
+      lyrics as never,
+      users as never,
+      events as never,
+      config as never,
+    );
+    return { service, users };
+  }
+
+  it('caps XP from solo play and flags when the cap is hit', async () => {
+    const { service, users } = setupWithCap(5);
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 4 });
+
+    const first = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+    expect(first.pointsAwarded).toBe(100);
+    expect(first.xpAwarded).toBe(5);
+    expect(first.capHit).toBe(true);
+
+    const second = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+    expect(second.xpAwarded).toBe(0);
+    expect(second.capHit).toBe(true);
+
+    // XP credited is the capped amount, not the full points.
+    expect(users.awardXp).toHaveBeenNthCalledWith(1, 'host', 5, true);
+    expect(users.awardXp).toHaveBeenNthCalledWith(2, 'host', 0, true);
+  });
+
+  it('does not cap head-to-head play', async () => {
+    const { service } = setupWithCap(5);
+    const session = await service.createSession('host', GameMode.HEAD_TO_HEAD);
+    await service.joinSession(session.id, 'guest');
+
+    const result = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+    expect(result.pointsAwarded).toBe(100);
+    expect(result.xpAwarded).toBe(100);
+    expect(result.capHit).toBe(false);
   });
 });

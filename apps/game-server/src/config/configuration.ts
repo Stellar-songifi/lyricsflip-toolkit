@@ -9,6 +9,11 @@ export interface AppConfig {
    * `ROUNDS_PER_SESSION`, default 10.
    */
   roundsPerSession: number;
+  /**
+   * Maximum XP a player can earn from a single solo (single-player) session.
+   * `SOLO_XP_CAP`, default 100. Head-to-head play is not capped.
+   */
+  soloXpCap: number;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string | null;
   jwt: {
@@ -102,6 +107,12 @@ export default (): AppConfig => {
     throw new Error(`ROUNDS_PER_SESSION must be a positive integer, got "${rawRounds}"`);
   }
 
+  const rawSoloXpCap = process.env.SOLO_XP_CAP ?? '100';
+  const soloXpCap = Number(rawSoloXpCap);
+  if (!Number.isFinite(soloXpCap) || soloXpCap < 0) {
+    throw new Error(`SOLO_XP_CAP must be a non-negative number, got "${rawSoloXpCap}"`);
+  }
+
   const rawHttpTimeoutMs = process.env.STELLAR_RPC_HTTP_TIMEOUT_MS ?? '15000';
   const httpTimeoutMs = Number(rawHttpTimeoutMs);
   // A hung RPC node must not hold the request handler open, so the timeout has
@@ -117,6 +128,7 @@ export default (): AppConfig => {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv,
     roundsPerSession,
+    soloXpCap,
     corsOrigin,
     jwt: {
       secret: required('JWT_SECRET'),
