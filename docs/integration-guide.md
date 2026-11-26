@@ -41,6 +41,7 @@ For a classic asset, deploy its Stellar Asset Contract first with
 | `STELLAR_ESCROW_CONTRACT_ID` | The deployed `pvp-escrow` contract |
 | `STELLAR_TOKEN_CONTRACT_ID` | The stake token |
 | `STELLAR_RESOLVER_SECRET` | The resolver key. Keep it in a secrets manager, never in git. |
+| `STELLAR_RESOLVER_SECRET_SOURCE` | `env`, `file`, `vault` or `aws-secrets-manager`. Anything but `env` is re-read after `STELLAR_RESOLVER_SECRET_CACHE_TTL_MS`, so the key rotates without a restart. See [resolver key rotation](../apps/game-server/docs/resolver-key-rotation.md). |
 | `STELLAR_CUSTODY_MODE` | `non-custodial` (default). `custodial` is refused on `public`. |
 | `SEP10_SIGNING_SECRET` | Stable key that signs SEP-10 challenges. Required in production. |
 | `SEP10_HOME_DOMAIN` | Domain named in SEP-10 challenges |

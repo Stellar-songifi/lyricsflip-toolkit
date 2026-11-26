@@ -1,0 +1,9 @@
+appId: com.stellarsongifi.lyricsflip
+---
+- runFlow: subflows/sign-in.yaml
+- tapOn: "Head-to-head"
+- assertVisible: "Stake (test tokens), optional"
+- tapOn: "Stake (test tokens), optional"
+- inputText: "1"
+- tapOn: "Create challenge"
+- assertVisible: "Share"

@@ -59,6 +59,7 @@ export default function HeadToHead() {
         style={styles.input}
         placeholder="Stake (test tokens), optional"
         placeholderTextColor={colors.muted}
+        accessibilityLabel="Stake in test tokens"
         keyboardType="decimal-pad"
         value={stake}
         onChangeText={setStake}
@@ -67,6 +68,7 @@ export default function HeadToHead() {
         style={styles.input}
         placeholder="Opponent username, optional"
         placeholderTextColor={colors.muted}
+        accessibilityLabel="Opponent username"
         autoCapitalize="none"
         value={opponent}
         onChangeText={setOpponent}
@@ -76,6 +78,7 @@ export default function HeadToHead() {
         style={styles.input}
         placeholder="Have a code?"
         placeholderTextColor={colors.muted}
+        accessibilityLabel="Challenge code"
         autoCapitalize="characters"
         value={code}
         onChangeText={setCode}

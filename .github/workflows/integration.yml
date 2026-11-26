@@ -31,13 +31,13 @@ concurrency:
 jobs:
   stellar-local:
     runs-on: ubuntu-latest
-    # A cold run is dominated by the Rust side: this workflow has no cargo
-    # cache, so the wasm32v1-none target and the whole soroban-sdk graph are
-    # compiled from scratch (minutes on their own). Then the quickstart image
-    # pull, `npm ci`, the wait-for-network loop below (up to 5 minutes before
-    # it gives up), and the integration suite. Cold runs land around 10-15
-    # minutes, so 30 leaves headroom for a slow runner or a flaky image pull
-    # without letting a wedged job sit for the 6-hour default.
+    # A cold run is dominated by the Rust side: the wasm32v1-none target and
+    # the whole soroban-sdk graph are compiled from scratch (minutes on their
+    # own), though the cargo cache below makes warm runs much cheaper. Then the
+    # quickstart image pull, `npm ci`, the wait-for-network loop below (up to 5
+    # minutes before it gives up), and the integration suite. Cold runs land
+    # around 10-15 minutes, so 30 leaves headroom for a slow runner or a flaky
+    # image pull without letting a wedged job sit for the 6-hour default.
     timeout-minutes: 30
     services:
       postgres:
@@ -57,13 +57,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to an explicit tag rather than `latest`: the Stellar Core/RPC
+      # version the integration suite runs against must be reproducible for a
+      # given commit. Keep this in step with the `stellar` service in
+      # docker-compose.yml. To bump: change the tag here and in
+      # docker-compose.yml in the same PR, then run this workflow to confirm
+      # the suite still passes against the new image.
       - name: Start a local Stellar network
-        run: docker run -d --name stellar -p 8000:8000 stellar/quickstart:latest --local --enable core,rpc
+        run: docker run -d --name stellar -p 8000:8000 stellar/quickstart:v429 --local --enable core,rpc
 
+      # Pinned to an explicit toolchain rather than `stable`: a new stable
+      # release can change rustc/clippy behavior with no commit in this repo.
+      # Keep this in step with contracts.yml and rust-toolchain.toml. To bump:
+      # update the version in all three places in the same PR.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.84.0
         with:
           targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Build pvp-escrow
         working-directory: contracts

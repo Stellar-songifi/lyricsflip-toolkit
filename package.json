@@ -18,7 +18,11 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "test:e2e": "npm run test:e2e --workspaces --if-present"
+    "test:e2e": "npm run test:e2e --workspaces --if-present",
+    "openapi:check": "npm run openapi:export -w @lyricsflip-toolkit/game-server && npm run openapi:types -w @lyricsflip-toolkit/game-server && git diff --exit-code apps/game-server/openapi.json apps/mobile/src/lib/api-types.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.4"
   },
   "overrides": {
     "react": "19.2.3",
