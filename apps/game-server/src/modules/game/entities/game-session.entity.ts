@@ -22,6 +22,15 @@ export enum GameSessionStatus {
 }
 
 /**
+ * A single player's answer for one round. `outcome` mirrors the guess result
+ * (`correct` / `wrong` / `timeout`); `points` is what the answer scored.
+ */
+export interface RoundAnswer {
+  outcome: string;
+  points: number;
+}
+
+/**
  * A game session. Rounds live only in Postgres — there is no on-chain copy
  * of game state; the chain only holds stakes (see `contracts/pvp-escrow`).
  */
@@ -64,6 +73,14 @@ export class GameSession {
    */
   @Column({ type: 'jsonb', default: () => "'{}'" })
   currentStreak: Record<string, number>;
+
+  /**
+   * Per-player answer state, keyed by round then userId. Lets a head-to-head
+   * (or room) round advance only once every player has answered, and lets a
+   * second guess by the same player in the same round be rejected (issue #26).
+   */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  roundAnswers: Record<string, Record<string, RoundAnswer>>;
 
   /**
    * Lyric ids this session has already presented. Persisted so a restart can
