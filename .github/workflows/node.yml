@@ -111,7 +111,7 @@ jobs:
         run: npm run test:cov -w @lyricsflip-toolkit/game-server
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: apps/game-server/coverage/lcov.info
           flags: game-server
