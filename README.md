@@ -201,6 +201,7 @@ Full setup, including env variables and testnet deployment, is in
 - Custodial mode is refused on Stellar mainnet.
 
 Read [`docs/threat-model.md`](docs/threat-model.md) for what the toolkit does and does not protect against.
+To report a vulnerability privately, follow [`SECURITY.md`](SECURITY.md).
 
 ## When to use something else
 
@@ -213,6 +214,7 @@ See [`docs/alternatives.md`](docs/alternatives.md).
 - [`docs/architecture.md`](docs/architecture.md) — components and the wager lifecycle
 - [`docs/integration-guide.md`](docs/integration-guide.md) — add stakes to your own game
 - [`docs/threat-model.md`](docs/threat-model.md) — trust assumptions and attack scenarios
+- [`SECURITY.md`](SECURITY.md) — supported versions and how to report a vulnerability privately
 - [`docs/alternatives.md`](docs/alternatives.md) — other Stellar escrow options
 - [`docs/mobile.md`](docs/mobile.md) — the Expo app
 - [`docs/wallet-spike.md`](docs/wallet-spike.md) — mobile wallet options (passkeys and others)

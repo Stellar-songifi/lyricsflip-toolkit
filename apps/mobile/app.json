@@ -9,11 +9,29 @@
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.stellarsongifi.lyricsflip",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "associatedDomains": [
+        "applinks:lyricsflip.stellarsongifi.com"
+      ]
     },
     "android": {
       "package": "com.stellarsongifi.lyricsflip",
       "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "lyricsflip.stellarsongifi.com",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
         {
           "action": "VIEW",
           "data": [
@@ -31,6 +49,7 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      ["@sentry/react-native", { "enableNativeCrashHandling": true }],
       [
         "expo-notifications",
         {

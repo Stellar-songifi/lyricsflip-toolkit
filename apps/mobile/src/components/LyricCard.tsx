@@ -12,7 +12,7 @@ export function LyricCard({ lyric, outcome }: { lyric: PublicLyric; outcome?: Gu
   return (
     <View
       style={[styles.card, outcome && { borderColor: OUTCOME_COLOR[outcome] }]}
-      accessibilityLabel={`Lyric: ${lyric.snippet}`}
+      accessibilityLabel={`Lyric: ${lyric.snippet}${outcome ? `. Guess outcome: ${outcome}` : ''}`}
     >
       <Text style={styles.snippet}>“{lyric.snippet}”</Text>
       <Text style={styles.meta}>
