@@ -1,0 +1,5 @@
+appId: com.stellarsongifi.lyricsflip
+---
+- runFlow: subflows/sign-in.yaml
+- tapOn: "Profile"
+- assertVisible: "Match history"

@@ -21,9 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Rust toolchain is pinned to an explicit version for reproducibility.
+      # To bump: update the `toolchain` value below (and any matching
+      # rust-toolchain.toml), then verify `cargo fmt`, `cargo clippy`, and
+      # `cargo test` still pass locally before merging.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.84.0"
           targets: wasm32v1-none
           components: rustfmt, clippy
 
@@ -69,3 +74,4 @@ jobs:
         # (fails on >15% instruction/memory growth or any new ledger
         # read/write) and the in-place upgrade test.
         run: cargo test -p pvp-escrow -- --ignored --nocapture
+        run: cargo test --workspace

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lyricsflip_test
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  stellar:
+    image: stellar/quickstart:v425
+    command: --local --enable core,rpc
+    ports:
+      - "8000:8000"
+    profiles:
+      - stellar
+</｜｜DSML｜｜ parameter>

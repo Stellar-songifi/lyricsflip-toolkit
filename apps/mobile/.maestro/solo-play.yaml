@@ -1,0 +1,12 @@
+appId: com.stellarsongifi.lyricsflip
+---
+- runFlow: subflows/sign-in.yaml
+- tapOn: "Solo"
+- assertVisible: "Ten lyrics. Name the song or the artist."
+- tapOn: "Start"
+- assertVisible: "Round"
+- assertVisible: "Song title or artist"
+- tapOn: "Song title or artist"
+- inputText: "Firework"
+- tapOn: "Guess"
+- assertVisible: "points"
