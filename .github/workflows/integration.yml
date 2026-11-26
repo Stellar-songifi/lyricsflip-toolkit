@@ -71,7 +71,7 @@ jobs:
       # Keep this in step with contracts.yml and rust-toolchain.toml. To bump:
       # update the version in all three places in the same PR.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.84.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           targets: wasm32v1-none
 
