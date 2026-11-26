@@ -1,0 +1,17 @@
+[package]
+name = "test-smart-wallet"
+# Test fixture only: a contract account (C...) controlled by one ed25519 key,
+# standing in for a passkey smart wallet in local-network integration tests.
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

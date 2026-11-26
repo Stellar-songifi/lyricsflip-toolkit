@@ -21,6 +21,8 @@ export { WalletLink } from './wallet/wallet-link.entity';
 export { WalletLinkService } from './wallet/wallet-link.service';
 export { Sep10Redeemed } from './wallet/sep10-redeemed.entity';
 export { Sep10Service } from './wallet/sep10.service';
+export { Sep45Service, encodeAuthorizationEntries, decodeAuthorizationEntries } from './wallet/sep45.service';
+export type { Sep45Challenge } from './wallet/sep45.service';
 export { Sep10CleanupService } from './wallet/sep10-cleanup.service';
 export type { Sep10Challenge } from './wallet/sep10.service';
 export { WagerReconcilerService } from './reconcile/wager-reconciler.service';

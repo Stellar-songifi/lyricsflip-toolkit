@@ -146,3 +146,51 @@ export async function deploy(): Promise<Deployment> {
 
   return { server, admin, resolver, issuer, asset, tokenContractId, escrowContractId };
 }
+
+/** Uploads and deploys any contract Wasm from `deployer`; returns its id. */
+export async function deployContract(
+  server: rpc.Server,
+  deployer: Keypair,
+  wasmPath: string,
+  constructorArgs: ReturnType<Address['toScVal']>[] = [],
+): Promise<string> {
+  if (!existsSync(wasmPath)) {
+    throw new Error(`Build the contracts first: cd contracts && cargo build --target wasm32v1-none --release (${wasmPath} is missing)`);
+  }
+  const upload = await soroban(server, deployer, Operation.uploadContractWasm({ wasm: readFileSync(wasmPath) }));
+  const wasmHash = Buffer.from(scValToNative(upload.returnValue!));
+  const created = await soroban(
+    server,
+    deployer,
+    Operation.createCustomContract({
+      address: new Address(deployer.publicKey()),
+      wasmHash,
+      salt: randomBytes(32),
+      constructorArgs,
+    }),
+  );
+  return Address.fromScVal(created.returnValue!).toString();
+}
+
+/** Creates `keypair`'s account from `funder` with exactly `startingBalance` XLM. */
+export async function createAccount(server: rpc.Server, funder: Keypair, keypair: Keypair, startingBalance: string) {
+  await classic(server, funder, [
+    Operation.createAccount({ destination: keypair.publicKey(), startingBalance }) as ReturnType<typeof Operation.payment>,
+  ]);
+}
+
+/** Sends `amount` XLM from `from` to `to`. */
+export async function sendXlm(server: rpc.Server, from: Keypair, to: string, amount: string) {
+  await classic(server, from, [Operation.payment({ destination: to, asset: Asset.native(), amount })]);
+}
+
+/** An account's native balance, in stroops. */
+export async function xlmBalance(server: rpc.Server, address: string): Promise<bigint> {
+  const entry = await server.getAccountEntry(address);
+  return BigInt(entry.balance);
+}
+
+export const FIXTURE_WASM = {
+  webAuth: resolve(__dirname, '../../../contracts/target/wasm32v1-none/release/sep45_web_auth.wasm'),
+  smartWallet: resolve(__dirname, '../../../contracts/target/wasm32v1-none/release/test_smart_wallet.wasm'),
+};

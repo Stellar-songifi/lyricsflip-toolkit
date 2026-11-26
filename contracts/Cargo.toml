@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["pvp-escrow"]
+members = ["pvp-escrow", "test-fixtures/sep45-web-auth", "test-fixtures/test-smart-wallet"]
 
 [workspace.dependencies]
 soroban-sdk = "27.0.6"

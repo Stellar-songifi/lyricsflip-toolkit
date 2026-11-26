@@ -9,6 +9,7 @@ export const API_TIMEOUT_MS = process.env.EXPO_PUBLIC_API_TIMEOUT_MS
 export const NETWORK_PASSPHRASE =
   process.env.EXPO_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET;
 
+/** Empty string disables friendbot funding, e.g. when the server sponsors stake fees (#60). */
 export const FRIENDBOT_URL = process.env.EXPO_PUBLIC_FRIENDBOT_URL ?? 'https://friendbot.stellar.org';
 
 /**

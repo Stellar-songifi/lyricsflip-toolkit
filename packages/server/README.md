@@ -48,7 +48,12 @@ exports `WagerService`, `WalletLinkService` and `Sep10Service`.
 | `stellar.custodyMode` | `non-custodial` | `custodial` signs stakes with `custodialPlayerSecret(playerId)`. Refused on `public`. |
 | `stellar.stakeTxTimeoutSeconds` | 300 | How long a player has to sign their stake |
 | `stellar.confirmTimeoutSeconds` | 30 | Polling before a submission is reported `pending` |
+| `stellar.configCheck` | `fail` | At boot, compare the contract's `get_config` with this server: its resolver must be our key and its token `tokenContractId`. `fail` refuses to boot on a mismatch, `warn` only logs (during a rotation), `off` skips it. The admin address is logged. |
+| `stellar.feeSponsorSecret` | — | Fee account (S...) that pays players' stake fees through a fee-bump, so players need the stake token but no XLM. The player's inner transaction is still checked with `assertIsStake`; client-built fee-bumps are refused. |
+| `stellar.feeSponsorship` | 1 XLM / 100 XLM / 20 | Limits for sponsorship: `maxFeePerStakeStroops`, `dailyBudgetStroops` (per UTC day), `maxStakesPerPlayerPerDay`. Per process. |
 | `sep10.signingSecret`, `sep10.homeDomain` | — | Stable SEP-10 server key and domain |
+| `sep45.webAuthContractId`, `sep45.rpcUrl` | — | Enables wallet linking for contract accounts (`C...`, passkey wallets) through SEP-45, reusing the `sep10` key and domain. The signing key's account must exist on the network. `POST /wallet/challenge` and `/wallet/verify` pick SEP-10 or SEP-45 from the address type; SEP-45 verify takes `authorizationEntries`. |
+| `sep45.challengeLedgers` | 60 | Ledgers a SEP-45 challenge (and the wallet's signature) stays valid |
 | `authenticate(request)` | — | Returns the player id or `null`. Player ids are never read from bodies. |
 | `potTimeoutLedgers` | 17,280 (~1 day) | Ledgers until players may reclaim stakes (60–518,400) |
 | `acceptWindowSeconds` | 900 | Pending wagers older than this are cancelled |

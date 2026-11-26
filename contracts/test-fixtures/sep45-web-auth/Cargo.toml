@@ -1,0 +1,18 @@
+[package]
+name = "sep45-web-auth"
+# Test fixture only: a minimal SEP-45 web auth contract for the server's
+# local-network integration tests. Production deployments use the reference
+# contract (github.com/stellar/sep45-reference).
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
