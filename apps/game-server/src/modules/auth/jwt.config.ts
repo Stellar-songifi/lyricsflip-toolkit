@@ -18,3 +18,19 @@ export function bearerToken(request: { headers?: Record<string, unknown> }): str
   const [scheme, token] = header.split(' ');
   return scheme?.toLowerCase() === 'bearer' && token ? token : null;
 }
+
+/**
+ * Reads the `exp` claim (seconds since epoch) from a decoded JWT payload.
+ * Returns `null` when the claim is missing or not a finite number.
+ */
+export function tokenExpiry(payload: unknown): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const exp = (payload as { exp?: unknown }).exp;
+  return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
+}
+
+/** True when the token's `exp` (seconds) has already passed. */
+export function isTokenExpired(exp: number | null, nowMs: number = Date.now()): boolean {
+  if (exp === null) return true;
+  return exp * 1000 <= nowMs;
+}
