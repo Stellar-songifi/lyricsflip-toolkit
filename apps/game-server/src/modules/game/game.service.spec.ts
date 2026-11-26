@@ -65,7 +65,7 @@ function createMockSessionsRepo() {
 }
 
 /** An in-memory stand-in for the TypeORM repository, so this needs no Postgres. */
-function setup(roundsPerSession: number) {
+function setup(roundsPerSession: number, roundSeconds = 20) {
   const repo = createMockSessionsRepo();
   const lyrics = {
     getRandom: jest.fn(async () => LYRIC),
@@ -74,7 +74,13 @@ function setup(roundsPerSession: number) {
   };
   const users = { awardXp: jest.fn(async () => undefined) };
   const events = { emit: jest.fn() };
-  const config = { get: jest.fn(() => roundsPerSession) };
+  const config = {
+    get: jest.fn((key: string) => {
+      if (key === 'roundsPerSession') return roundsPerSession;
+      if (key === 'roundSeconds') return roundSeconds;
+      return undefined;
+    }),
+  };
 
   const service = new GameService(
     repo as never,
@@ -208,7 +214,13 @@ describe('GameService restart persistence (issue #2)', () => {
     };
     const users = { awardXp: jest.fn(async () => undefined) };
     const events = { emit: jest.fn() };
-    const config = { get: jest.fn(() => 10) };
+    const config = {
+      get: jest.fn((key: string) => {
+        if (key === 'roundsPerSession') return 10;
+        if (key === 'roundSeconds') return 20;
+        return undefined;
+      }),
+    };
 
     const serviceA = new GameService(
       repo as never, lyrics as never, users as never, events as never, config as never,
@@ -247,7 +259,13 @@ describe('GameService restart persistence (issue #2)', () => {
     };
     const users = { awardXp: jest.fn(async () => undefined) };
     const events = { emit: jest.fn() };
-    const config = { get: jest.fn(() => 5) };
+    const config = {
+      get: jest.fn((key: string) => {
+        if (key === 'roundsPerSession') return 5;
+        if (key === 'roundSeconds') return 20;
+        return undefined;
+      }),
+    };
 
     const serviceA = new GameService(
       repo as never, lyrics as never, users as never, events as never, config as never,
@@ -272,5 +290,181 @@ describe('GameService restart persistence (issue #2)', () => {
     // Every lyric the session saw is unique: no repeats across the restart.
     expect(new Set(afterB.seenLyricIds).size).toBe(afterB.seenLyricIds.length);
     expect(afterB.seenLyricIds.length).toBeGreaterThanOrEqual(seenAfterA.size);
+  });
+});
+
+describe('GameService round deadline', () => {
+  /**
+   * Returns a fake clock. `tick(ms)` advances the virtual time and nothing
+   * more — no real timers fire. Use `service.now = clock.now` to wire it in.
+   */
+  function makeClock(start = 1_000_000) {
+    let t = start;
+    return {
+      now: () => t,
+      tick: (ms: number) => { t += ms; },
+    };
+  }
+
+  it('roundEndsAt on a fresh lyric equals roundStartedAt + roundSeconds * 1000', async () => {
+    const clock = makeClock();
+    const { service } = setup(5, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+    const lyric = await service.getCurrentLyric(session.id);
+
+    expect(lyric.roundEndsAt).toBe(clock.now() + 20_000);
+  });
+
+  it('a guess before the deadline scores normally', async () => {
+    const clock = makeClock();
+    const { service } = setup(5, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+
+    // 1 second in — well inside the 20-second window.
+    clock.tick(1_000);
+    const result = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+
+    expect(result.outcome).toBe('correct');
+    expect(result.pointsAwarded).toBeGreaterThan(0);
+  });
+
+  it('a guess after the deadline scores 0 and counts as a miss', async () => {
+    const clock = makeClock();
+    const { service } = setup(5, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+
+    // 21 seconds later — deadline was at 20 s.
+    clock.tick(21_000);
+    const result = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+
+    expect(result.outcome).toBe('miss');
+    expect(result.pointsAwarded).toBe(0);
+  });
+
+  it('a late guess still advances the round', async () => {
+    const clock = makeClock();
+    const { service } = setup(5, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 2 });
+
+    clock.tick(21_000);
+    const r1 = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+    expect(r1.sessionStatus).toBe(GameSessionStatus.ACTIVE);
+    expect(r1.nextLyric).not.toBeNull();
+
+    // The new round resets the clock (roundStartedAt is "now"), so the next
+    // guess within 20 s scores normally.
+    clock.tick(1_000);
+    const r2 = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+    expect(r2.sessionStatus).toBe(GameSessionStatus.FINISHED);
+    expect(r2.outcome).toBe('correct');
+  });
+
+  it('nextLyric carries a fresh roundEndsAt after each round advance', async () => {
+    const clock = makeClock(0);
+    const { service } = setup(5, 30);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 3 });
+
+    clock.tick(5_000);
+    const r1 = await service.submitGuess(session.id, 'host', 'wrong');
+    // The next round started at t=5000, so its deadline is at t=35000.
+    expect(r1.nextLyric!.roundEndsAt).toBe(5_000 + 30_000);
+
+    clock.tick(10_000); // t=15000, still within round 2
+    const r2 = await service.submitGuess(session.id, 'host', 'wrong');
+    expect(r2.nextLyric!.roundEndsAt).toBe(15_000 + 30_000);
+  });
+
+  it('closeExpiredRound is a no-op before the deadline', async () => {
+    const clock = makeClock();
+    const { service } = setup(3, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+
+    clock.tick(10_000); // 10 s — still inside the 20-second window
+    const advanced = await service.closeExpiredRound(session.id);
+
+    expect(advanced).toBe(false);
+    const reloaded = await service.getSession(session.id);
+    expect(reloaded.currentRound).toBe(1);
+  });
+
+  it('closeExpiredRound advances the round after the deadline passes', async () => {
+    const clock = makeClock();
+    const { service, events } = setup(3, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+
+    clock.tick(21_000);
+    const advanced = await service.closeExpiredRound(session.id);
+
+    expect(advanced).toBe(true);
+    const reloaded = await service.getSession(session.id);
+    expect(reloaded.currentRound).toBe(2);
+    // No game.session.finished yet — only round 1 of 3 closed.
+    expect(events.emit).not.toHaveBeenCalledWith('game.session.finished', expect.anything());
+  });
+
+  it('closeExpiredRound finishes the session on the last expired round', async () => {
+    const clock = makeClock();
+    const { service, events } = setup(3, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO, { rounds: 1 });
+
+    clock.tick(21_000);
+    const advanced = await service.closeExpiredRound(session.id);
+
+    expect(advanced).toBe(true);
+    const reloaded = await service.getSession(session.id);
+    expect(reloaded.status).toBe(GameSessionStatus.FINISHED);
+    expect(events.emit).toHaveBeenCalledWith(
+      'game.session.finished',
+      expect.objectContaining({ sessionId: session.id }),
+    );
+  });
+
+  it('closeExpiredRound is idempotent — calling twice does not double-advance', async () => {
+    const clock = makeClock();
+    const { service } = setup(3, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO);
+
+    clock.tick(21_000);
+    await service.closeExpiredRound(session.id);
+    const secondCall = await service.closeExpiredRound(session.id);
+
+    // After the first call the new round hasn't expired yet, so the second
+    // call must be a no-op.
+    expect(secondCall).toBe(false);
+    const reloaded = await service.getSession(session.id);
+    expect(reloaded.currentRound).toBe(2);
+  });
+
+  it('a per-session roundSeconds override is respected', async () => {
+    const clock = makeClock();
+    // Config default is 20 s; session overrides to 10 s.
+    const { service } = setup(5, 20);
+    service.now = clock.now;
+
+    const session = await service.createSession('host', GameMode.SOLO, { roundSeconds: 10 });
+
+    clock.tick(11_000); // 11 s — expired under the 10-s override, not the 20-s default
+    const result = await service.submitGuess(session.id, 'host', 'Thrift Shop');
+
+    expect(result.outcome).toBe('miss');
+    expect(result.pointsAwarded).toBe(0);
   });
 });

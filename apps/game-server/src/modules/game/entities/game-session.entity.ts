@@ -89,6 +89,22 @@ export class GameSession {
   @Column({ type: 'uuid', array: true, default: () => "'{}'" })
   seenLyricIds: string[];
 
+  /**
+   * When the current round's card was first shown. Used with `roundSeconds` to
+   * compute the deadline. `null` before the first card is dealt and after the
+   * session finishes.
+   */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  roundStartedAt: Date | null;
+
+  /**
+   * Per-round time budget in seconds. Fixed at session creation from
+   * `ROUND_SECONDS`, or a per-session override. Stored so a config change
+   * can't silently shift the deadline of a session already in progress.
+   */
+  @Column({ default: 20 })
+  roundSeconds: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

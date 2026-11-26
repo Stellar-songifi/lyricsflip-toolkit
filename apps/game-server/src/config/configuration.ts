@@ -9,6 +9,12 @@ export interface AppConfig {
    * `ROUNDS_PER_SESSION`, default 10.
    */
   roundsPerSession: number;
+  /**
+   * Seconds a player has to answer each card before the round closes.
+   * `ROUND_SECONDS`, default 20. A session can override it via
+   * `CreateSessionOptions.roundSeconds`.
+   */
+  roundSeconds: number;
   /** Browser origin allowed by CORS (the web game). Native apps don't need it. */
   corsOrigin: string | null;
   /**
@@ -174,6 +180,12 @@ export default (): AppConfig => {
     throw new Error(`ROUNDS_PER_SESSION must be a positive integer, got "${rawRounds}"`);
   }
 
+  const rawRoundSeconds = process.env.ROUND_SECONDS ?? '20';
+  const roundSeconds = Number(rawRoundSeconds);
+  if (!Number.isInteger(roundSeconds) || roundSeconds < 1) {
+    throw new Error(`ROUND_SECONDS must be a positive integer, got "${rawRoundSeconds}"`);
+  }
+
   const rawHttpTimeoutMs = process.env.STELLAR_RPC_HTTP_TIMEOUT_MS ?? '15000';
   const httpTimeoutMs = Number(rawHttpTimeoutMs);
   // A hung RPC node must not hold the request handler open, so the timeout has
@@ -189,6 +201,7 @@ export default (): AppConfig => {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv,
     roundsPerSession,
+    roundSeconds,
     corsOrigin,
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     jwt: {
