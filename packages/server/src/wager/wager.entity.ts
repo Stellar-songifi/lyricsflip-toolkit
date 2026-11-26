@@ -111,6 +111,15 @@ export class Wager {
   @Column({ type: 'integer', default: 0 })
   reconcileAttempts: number;
 
+  /**
+   * When the reconciler may next attempt this wager. `null` means "due now"
+   * (never attempted, or explicitly reset). Set by the reconciler's backoff
+   * policy so retry timing does not depend on `updatedAt` or sweep cadence.
+   */
+  @Index()
+  @Column({ type: 'timestamptz', nullable: true })
+  nextAttemptAt: Date | null;
+
   @Column({ type: 'text', nullable: true })
   failureReason: string | null;
 
