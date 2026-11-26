@@ -53,10 +53,12 @@ export class Wager {
   matchId: string;
 
   /** The player who proposed the wager. */
+  @Index('IDX_pvp_wagers_playerAId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerAId: string;
 
   /** The invited player. Nothing is asked of them until they accept. */
+  @Index('IDX_pvp_wagers_playerBId_createdAt')
   @Column({ type: 'varchar', length: 128 })
   playerBId: string;
 
