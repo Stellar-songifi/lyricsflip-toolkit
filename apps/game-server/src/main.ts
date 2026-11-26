@@ -3,6 +3,9 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 import { join } from 'path';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
@@ -60,6 +63,25 @@ async function bootstrap() {
   app.useStaticAssets(join(__dirname, '..', 'public'));
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const configService = app.get(ConfigService<AppConfig, true>);
+
+  const redisUrl = configService.get('redisUrl' as keyof AppConfig, { infer: true }) as string | undefined;
+  if (redisUrl) {
+    const pubClient = createClient({ url: redisUrl });
+    const subClient = pubClient.duplicate();
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    const redisAdapter = createAdapter(pubClient, subClient);
+    class RedisIoAdapter extends IoAdapter {
+      createIOServer(port: number, options?: Record<string, unknown>) {
+        const server = super.createIOServer(port, options);
+        server.adapter(redisAdapter);
+        return server;
+      }
+    }
+    app.useWebSocketAdapter(new RedisIoAdapter(app));
+    logger.log('Socket.IO Redis adapter enabled');
+  } else {
+    logger.warn('REDIS_URL not set — Socket.IO is using the in-memory adapter (single-instance only)');
+  }
 
   const nodeEnv = configService.get('nodeEnv', { infer: true });
   const isProduction = nodeEnv === 'production';
