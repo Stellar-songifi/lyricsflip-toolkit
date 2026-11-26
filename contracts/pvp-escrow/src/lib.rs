@@ -30,6 +30,10 @@ pub const MAX_TIMEOUT_LEDGERS: u32 = 30 * DAY_IN_LEDGERS;
 pub const TTL_EXTEND_TO: u32 = 45 * DAY_IN_LEDGERS;
 /// Extend whenever remaining lifetime drops below this.
 pub const TTL_THRESHOLD: u32 = TTL_EXTEND_TO - DAY_IN_LEDGERS;
+/// Highest platform fee `set_fee` accepts: 1,000 basis points = 10% of a pot.
+pub const MAX_FEE_BPS: u32 = 1_000;
+/// Basis points in 100%.
+pub const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -66,6 +70,11 @@ pub struct Config {
     pub resolver: Address,
     /// The stake token: a Soroban token or a classic asset's SAC.
     pub token: Address,
+    /// Platform fee taken from each resolved pot, in basis points. 0 (the
+    /// default) pays the winner the whole pot.
+    pub fee_bps: u32,
+    /// Receives the platform fee; `None` while `fee_bps` is 0.
+    pub fee_recipient: Option<Address>,
 }
 
 #[contracttype]
@@ -75,6 +84,14 @@ pub enum DataKey {
     Resolver,
     Token,
     Pot(BytesN<16>),
+    /// Admin candidate set by `propose_admin`, waiting for `accept_admin`.
+    PendingAdmin,
+    /// Platform fee in basis points (`set_fee`). Absent means 0.
+    FeeBps,
+    /// Receives the platform fee (`set_fee`).
+    FeeRecipient,
+    /// Set while the admin has paused new matches (`pause`).
+    Paused,
 }
 
 #[contracterror]
@@ -97,6 +114,13 @@ pub enum Error {
     DeadlinePassed = 14,
     DeadlineNotReached = 15,
     NothingToClaim = 16,
+    // 17 is `Paused` (#73).
+    /// `accept_admin` was called with no proposal pending.
+    NoPendingAdmin = 18,
+    /// `set_fee` above `MAX_FEE_BPS`, or a nonzero fee with no recipient.
+    InvalidFee = 19,
+    /// `open_pot` and `stake` are refused while the admin has paused the contract.
+    Paused = 17,
 }
 
 /// Published by `open_pot`.
@@ -124,7 +148,8 @@ pub struct Staked {
     pub stake_amount: i128,
 }
 
-/// Published by `resolve`.
+/// Published by `resolve`. `payout` went to the winner and `fee` to
+/// `fee_recipient`; together they are exactly the pot (`2 × stake_amount`).
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Resolved {
@@ -132,6 +157,24 @@ pub struct Resolved {
     pub session_id: BytesN<16>,
     pub winner: Address,
     pub payout: i128,
+    pub fee: i128,
+    pub fee_recipient: Option<Address>,
+}
+
+/// Published by `propose_admin`. Authority does not move until `accept_admin`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminProposed {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+}
+
+/// Published by `set_fee`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChanged {
+    pub fee_bps: u32,
+    pub fee_recipient: Option<Address>,
 }
 
 /// Published by `refund`.
@@ -158,13 +201,34 @@ pub struct Claimed {
     pub amount: i128,
 }
 
-/// Published by `set_resolver` and `set_admin`.
+/// Published by `set_resolver` and `accept_admin`.
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleChanged {
     #[topic]
     pub role: soroban_sdk::Symbol,
     pub address: Address,
+}
+
+/// Published by `pause`: no new pots or stakes until `unpause`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    pub admin: Address,
+}
+
+/// Published by `unpause`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Unpaused {
+    pub admin: Address,
+}
+
+/// Published by `upgrade` with the hash of the Wasm now running.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Upgraded {
+    pub new_wasm_hash: BytesN<32>,
 }
 
 #[contract]
@@ -200,16 +264,105 @@ impl PvpEscrow {
         Ok(())
     }
 
-    /// Hands the admin role to a new address (for example a multisig).
+    /// First step of an admin hand-over (for example to a multisig): records
+    /// `new_admin` as the candidate. The current admin keeps full authority
+    /// until the candidate calls `accept_admin`, so a mistyped address can't
+    /// lock the real admin out. Proposing again replaces the candidate.
     /// Admin only.
-    pub fn set_admin(env: Env, admin: Address) -> Result<(), Error> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::Admin, &admin);
-        RoleChanged {
-            role: symbol_short!("admin"),
-            address: admin,
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let current_admin = Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        AdminProposed {
+            current_admin,
+            proposed_admin: new_admin,
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Second step: the proposed admin proves control of their address and
+    /// becomes the admin. Requires the candidate's own signature.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        Self::extend_instance(&env);
+        let candidate: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::NoPendingAdmin)?;
+        candidate.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &candidate);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        RoleChanged {
+            role: symbol_short!("admin"),
+            address: candidate,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// The admin candidate waiting for `accept_admin`, if any.
+    pub fn pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// Sets the platform fee taken from each resolved pot. `fee_bps` is capped
+    /// at `MAX_FEE_BPS` (10%); a nonzero fee needs a recipient. `fee_bps = 0`
+    /// turns the fee off and the winner gets the whole pot. Admin only.
+    pub fn set_fee(env: Env, fee_bps: u32, fee_recipient: Option<Address>) -> Result<(), Error> {
+        Self::require_admin(&env)?;
+        if fee_bps > MAX_FEE_BPS || (fee_bps > 0 && fee_recipient.is_none()) {
+            return Err(Error::InvalidFee);
+        }
+        let storage = env.storage().instance();
+        if fee_bps == 0 {
+            storage.remove(&DataKey::FeeBps);
+            storage.remove(&DataKey::FeeRecipient);
+        } else {
+            storage.set(&DataKey::FeeBps, &fee_bps);
+            storage.set(&DataKey::FeeRecipient, &fee_recipient);
+        }
+        FeeChanged {
+            fee_bps,
+            fee_recipient: if fee_bps == 0 { None } else { fee_recipient },
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Stops new matches: `open_pot` and `stake` fail with `Error::Paused`
+    /// until `unpause`. `resolve`, `refund` and `claim_refund` keep working, so
+    /// pots already open can still be settled or returned. Admin only.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Paused { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Lifts `pause`. Admin only.
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        env.storage().instance().remove(&DataKey::Paused);
+        Unpaused { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// True while new pots and stakes are refused.
+    pub fn is_paused(env: Env) -> bool {
+        Self::paused(&env)
+    }
+
+    /// Replaces this contract's code with already-uploaded Wasm
+    /// (`stellar contract upload`), keeping its address, storage and balance.
+    /// Admin only. Only storage-compatible changes may ship this way: see
+    /// `docs/upgrade.md`.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        Self::require_admin(&env)?;
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        Upgraded { new_wasm_hash }.publish(&env);
         Ok(())
     }
 
@@ -225,6 +378,7 @@ impl PvpEscrow {
         timeout_ledgers: u32,
     ) -> Result<(), Error> {
         Self::require_resolver(&env)?;
+        Self::require_not_paused(&env)?;
 
         if !(MIN_TIMEOUT_LEDGERS..=MAX_TIMEOUT_LEDGERS).contains(&timeout_ledgers) {
             return Err(Error::InvalidTimeout);
@@ -271,6 +425,7 @@ impl PvpEscrow {
     /// players have staked, the pot moves to `Staked`.
     pub fn stake(env: Env, session_id: BytesN<16>, player: Address) -> Result<(), Error> {
         player.require_auth();
+        Self::require_not_paused(&env)?;
 
         let mut pot = Self::load_pot(&env, &session_id)?;
         if pot.status != PotStatus::Open {
@@ -329,14 +484,38 @@ impl PvpEscrow {
         }
 
         let token_client = Self::token(&env)?;
-        let pot_total = pot.stake_amount * 2;
-        token_client.transfer(&env.current_contract_address(), &winner, &pot_total);
+        let contract_address = env.current_contract_address();
+        let pot_total = pot
+            .stake_amount
+            .checked_mul(2)
+            .ok_or(Error::InvalidStakeAmount)?;
+        let (fee_bps, fee_recipient) = Self::fee(&env);
+        // Floor division: any remainder goes to the winner, so payout + fee is
+        // exactly pot_total and nothing is left in the contract.
+        let fee = match fee_recipient {
+            Some(_) if fee_bps > 0 => {
+                pot_total
+                    .checked_mul(fee_bps as i128)
+                    .ok_or(Error::InvalidStakeAmount)?
+                    / BPS_DENOMINATOR
+            }
+            _ => 0,
+        };
+        let payout = pot_total - fee;
+        token_client.transfer(&contract_address, &winner, &payout);
+        if fee > 0 {
+            if let Some(recipient) = &fee_recipient {
+                token_client.transfer(&contract_address, recipient, &fee);
+            }
+        }
 
         pot.status = PotStatus::Resolved;
         Resolved {
             session_id: session_id.clone(),
             winner,
-            payout: pot_total,
+            payout,
+            fee,
+            fee_recipient: if fee > 0 { fee_recipient } else { None },
         }
         .publish(&env);
         Self::save_pot(&env, &session_id, &pot);
@@ -445,12 +624,15 @@ impl PvpEscrow {
                 .get(&DataKey::Resolver)
                 .ok_or(Error::NotInitialized)?,
             token: storage.get(&DataKey::Token).ok_or(Error::NotInitialized)?,
+            fee_bps: storage.get(&DataKey::FeeBps).unwrap_or(0),
+            fee_recipient: storage.get(&DataKey::FeeRecipient).unwrap_or(None),
         })
     }
 }
 
 impl PvpEscrow {
-    fn require_admin(env: &Env) -> Result<(), Error> {
+    /// Requires the stored admin's authorisation and returns the admin.
+    fn require_admin(env: &Env) -> Result<Address, Error> {
         Self::extend_instance(env);
         let admin: Address = env
             .storage()
@@ -458,6 +640,20 @@ impl PvpEscrow {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+        Ok(admin)
+    }
+
+    fn paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), Error> {
+        if Self::paused(env) {
+            return Err(Error::Paused);
+        }
         Ok(())
     }
 
@@ -472,6 +668,15 @@ impl PvpEscrow {
             .ok_or(Error::NotInitialized)?;
         resolver.require_auth();
         Ok(())
+    }
+
+    /// The configured fee, `(0, None)` unless `set_fee` turned it on.
+    fn fee(env: &Env) -> (u32, Option<Address>) {
+        let storage = env.storage().instance();
+        (
+            storage.get(&DataKey::FeeBps).unwrap_or(0),
+            storage.get(&DataKey::FeeRecipient).unwrap_or(None),
+        )
     }
 
     fn token(env: &Env) -> Result<token::Client<'_>, Error> {
@@ -512,4 +717,6 @@ impl PvpEscrow {
     }
 }
 
+mod proptest_model;
+mod cost;
 mod test;

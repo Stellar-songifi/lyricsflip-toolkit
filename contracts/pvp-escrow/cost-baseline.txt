@@ -1,0 +1,8 @@
+# entry_point instructions mem_bytes read_entries write_entries
+claim_refund 807037 1270429 8 4
+open_pot 593597 1246893 5 2
+pause 495755 1240778 4 2
+refund 1025223 1295028 9 5
+resolve 842793 1272511 8 4
+stake_first 829697 1272977 9 4
+stake_second 838472 1272693 8 4

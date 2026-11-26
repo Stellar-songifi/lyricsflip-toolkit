@@ -16,7 +16,17 @@ import { MockPot } from './mock-pot.entity';
 /** Seconds per ledger, used to turn wall-clock time into a mock ledger number. */
 const SECONDS_PER_LEDGER = 5;
 
-export function currentMockLedger(now = Date.now()): number {
+let mockClock: () => number = () => Date.now();
+
+/**
+ * Replaces the clock the mock ledger is derived from, so tests can move time
+ * past a pot's deadline. Call with no argument to restore `Date.now`.
+ */
+export function setMockLedgerClock(clock?: () => number): void {
+  mockClock = clock ?? (() => Date.now());
+}
+
+export function currentMockLedger(now = mockClock()): number {
   return Math.floor(now / 1000 / SECONDS_PER_LEDGER);
 }
 
@@ -123,6 +133,37 @@ export class MockEscrowGateway implements EscrowGateway {
     );
     if (!took.affected) return failed('PotNotOpen');
     this.logger.debug(`[mock] refund ${potId}`);
+    return confirmed();
+  }
+
+  /**
+   * A player reclaims their own stake after the pot's deadline, mirroring the
+   * contract's `claim_refund`: only before the pot is settled, only after the
+   * deadline, only for a player who staked. The pot becomes `refunded` once
+   * both stakes are back.
+   */
+  async claimRefund(potId: string, player: string): Promise<SubmitOutcome> {
+    const pot = await this.pots.findOne({ where: { id: potId } });
+    if (!pot) return failed('PotNotFound');
+    if (pot.status !== 'open' && pot.status !== 'staked') return failed('PotNotOpen');
+    if (currentMockLedger() <= pot.deadlineLedger) return failed('DeadlineNotReached');
+
+    const isA = player === pot.playerA;
+    const isB = player === pot.playerB;
+    if (!isA && !isB) return failed('NotAPlayerInPot');
+    if ((isA && !pot.playerAStaked) || (isB && !pot.playerBStaked)) return failed('NothingToClaim');
+
+    const flag = isA ? 'playerAStaked' : 'playerBStaked';
+    const took = await this.pots.update(
+      { id: potId, status: In(['open', 'staked']), [flag]: true },
+      { [flag]: false },
+    );
+    if (!took.affected) return failed('NothingToClaim');
+    await this.pots.update(
+      { id: potId, status: In(['open', 'staked']), playerAStaked: false, playerBStaked: false },
+      { status: 'refunded' },
+    );
+    this.logger.debug(`[mock] claim_refund ${potId} player=${player}`);
     return confirmed();
   }
 

@@ -2,7 +2,7 @@ export * from './options';
 export * from './pvp-settlement.module';
 export * from './migrations';
 export * from './escrow/escrow.gateway';
-export { MockEscrowGateway } from './escrow/mock-escrow.gateway';
+export { MockEscrowGateway, currentMockLedger, setMockLedgerClock } from './escrow/mock-escrow.gateway';
 export { MockPot } from './escrow/mock-pot.entity';
 export { StellarEscrowGateway } from './escrow/stellar-escrow.gateway';
 export {

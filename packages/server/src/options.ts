@@ -119,6 +119,47 @@ export interface ReconcileOptions {
   maxAttempts?: number;
 }
 
+export type ReconcileSweepOutcome = 'success' | 'failed' | 'skipped';
+
+export interface ReconcileSweepObservation {
+  outcome: ReconcileSweepOutcome;
+  durationSeconds: number;
+}
+
+export interface ReconcileExhaustedObservation {
+  wagerId: string;
+  attempts: number;
+  failureReason: string;
+}
+
+export interface PvpObservabilityOptions {
+  /** Called after each reconciliation sweep. Observer errors are ignored. */
+  onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
+  /** Called once when a wager exhausts its settlement reconciliation attempts. */
+  onReconcileExhausted?: (observation: ReconcileExhaustedObservation) => void;
+export interface PvpObservabilityOptions {
+  /** Called after each reconciliation sweep. Observer errors are ignored. */
+  onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
+/**
+ * Durable delivery of wager events through the `pvp_wager_events` outbox.
+ *
+ * Events are written in the same transaction as the status change, so a crash
+ * between the commit and the handler cannot lose them: a background dispatcher
+ * picks up undelivered rows and calls `onEvent` until it succeeds.
+ */
+export interface OutboxOptions {
+  /** Run the outbox dispatcher. Default true. */
+  enabled?: boolean;
+  /** Seconds between dispatches. Default 5. */
+  dispatcherIntervalSeconds?: number;
+  /** Delivery attempts before a row is left for manual inspection. Default 10. */
+  maxAttempts?: number;
+  /** Base delay for exponential retry backoff, in milliseconds. Default 1,000. */
+  backoffMs?: number;
+  /** Upper bound on the retry backoff, in milliseconds. Default 300,000. */
+  maxBackoffMs?: number;
+}
+
 export interface PvpSettlementOptions {
   mode: SettlementMode;
   /** Required when `mode` is `stellar`. */
@@ -140,11 +181,26 @@ export interface PvpSettlementOptions {
   /** Seconds both players have to stake before the wager is refunded. Default 900. */
   stakeWindowSeconds?: number;
   reconcile?: ReconcileOptions;
+  /** Optional hooks for a host application's metrics implementation. */
+  observability?: PvpObservabilityOptions;
+  /** Tuning for the durable event outbox. */
+  outbox?: OutboxOptions;
   /**
-   * Called after each wager status change, e.g. to notify players. Runs
-   * after the change is committed; errors are logged and swallowed.
+   * Called for each wager status change, e.g. to notify players.
+   *
+   * Delivery is **at-least-once**: an event may be delivered more than once
+   * (after a crash, a timeout, or a retry), so handlers must be idempotent —
+   * key on the event id or the wager status rather than assuming a single call.
+   * Errors thrown by the handler are logged and retried with backoff.
    */
   onEvent?: (event: PvpEvent) => void;
+  /**
+   * Also call `onEvent` synchronously right after the status change commits,
+   * in addition to the outbox. Default false. Useful in tests that want the
+   * event without waiting for a dispatch; production should leave it off so
+   * handlers only run through the durable path.
+   */
+  synchronousEmit?: boolean;
   /** Mount the HTTP controllers. Default true. */
   controllers?: boolean;
 }
@@ -156,6 +212,10 @@ export const DEFAULTS = {
   reconcileIntervalSeconds: 60,
   reconcileMinAgeSeconds: 60,
   reconcileMaxAttempts: 8,
+  outboxDispatcherIntervalSeconds: 5,
+  outboxMaxAttempts: 10,
+  outboxBackoffMs: 1_000,
+  outboxMaxBackoffMs: 300_000,
   challengeTtlSeconds: 300,
   stakeTxTimeoutSeconds: 300,
   confirmTimeoutSeconds: 30,
@@ -204,6 +264,25 @@ export function validateOptions(options: PvpSettlementOptions): void {
   const timeout = options.potTimeoutLedgers ?? DEFAULTS.potTimeoutLedgers;
   if (timeout < 60 || timeout > 518_400) {
     throw new Error('potTimeoutLedgers must be between 60 and 518400, the contract limits');
+  }
+  const outbox = options.outbox;
+  if (outbox) {
+    const interval = outbox.dispatcherIntervalSeconds ?? DEFAULTS.outboxDispatcherIntervalSeconds;
+    if (!Number.isFinite(interval) || interval <= 0) {
+      throw new Error('outbox.dispatcherIntervalSeconds must be a positive number of seconds');
+    }
+    const maxAttempts = outbox.maxAttempts ?? DEFAULTS.outboxMaxAttempts;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error('outbox.maxAttempts must be a positive integer');
+    }
+    const backoffMs = outbox.backoffMs ?? DEFAULTS.outboxBackoffMs;
+    if (!Number.isFinite(backoffMs) || backoffMs < 0) {
+      throw new Error('outbox.backoffMs must be a non-negative number of milliseconds');
+    }
+    const maxBackoffMs = outbox.maxBackoffMs ?? DEFAULTS.outboxMaxBackoffMs;
+    if (!Number.isFinite(maxBackoffMs) || maxBackoffMs < backoffMs) {
+      throw new Error('outbox.maxBackoffMs must be a number no smaller than outbox.backoffMs');
+    }
   }
   if (options.stellar) {
     const httpTimeoutMs = options.stellar.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs;

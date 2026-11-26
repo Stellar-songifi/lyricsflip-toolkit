@@ -59,7 +59,9 @@ exports `WagerService`, `WalletLinkService` and `Sep10Service`.
 | `acceptWindowSeconds` | 900 | Pending wagers older than this are cancelled |
 | `stakeWindowSeconds` | 900 | Accepted wagers not fully staked by then are refunded |
 | `reconcile.enabled` / `intervalSeconds` / `minAgeSeconds` / `maxAttempts` | true / 60 / 60 / 8 | Background sweeper |
-| `onEvent(event)` | — | Called after each status change commits |
+| `abortBeforeDeadlineLedgers` | 720 (~1 hour) | Staked wagers whose pot deadline is this close are aborted and refunded by the reconciler before players can `claim_refund` |
+| `onEvent(event)` | — | Called for each wager event (at-least-once, see below) |
+| `synchronousEmit` | false | Call `onEvent` inline after the status change commits instead of via the outbox dispatcher. For tests only; loses events if the process dies. |
 | `controllers` | true | Mount the HTTP routes below |
 
 Invalid combinations (stellar mode without its settings, custodial on `public`, a timeout outside the
@@ -133,9 +135,49 @@ readable on-chain via `get_config` — so the route never leaks a secret.
 `onEvent` receives `{ type, wager }`, where `type` is one of `wager.created`, `wager.accepted`,
 `wager.staked`, `wager.won`, `wager.refunded`, `wager.cancelled` or `wager.failed`.
 
+### Delivery guarantees
+
+Events are written to the `pvp_wager_events` outbox in the same transaction as the status change,
+so an event is never lost once the change commits. A background dispatcher (interval plus a
+PostgreSQL advisory lock, like the reconciler) then calls `onEvent` for undelivered rows, marks them
+delivered and retries failures with backoff.
+
+Delivery is **at-least-once**: if the process dies after `onEvent` runs but before the row is marked
+delivered, the event is delivered again on a later dispatch. **Handlers must be idempotent** — key
+your side effects on the wager id and event type (or a dedupe table) so a repeated `wager.staked`
+does not start a match twice and a repeated `wager.won` does not notify twice.
+
+Set `synchronousEmit: true` to call `onEvent` inline after the commit (the old behaviour). Use it
+only in tests; it gives no durability guarantee.
+
+## Aborting staked wagers before the pot deadline
+
+If the game never calls `settle`, the pot's `deadline_ledger` eventually passes and either player can
+call `claim_refund`, leaving the server with a half-refunded pot and a `settle` that fails with
+`PotNotStaked`. To prevent that, the reconciler tracks the current ledger (RPC `getLatestLedger` in
+stellar mode, `currentMockLedger` in mock mode) and treats a `staked` wager as needing attention once
+its pot deadline is within `abortBeforeDeadlineLedgers`. Such wagers are aborted with a refund and a
+`wager.failed` event carrying a `POT_EXPIRED` reason, so the game can cancel the match. Wagers far
+from their deadline are untouched.
+
+## Error codes
+
+Client responses never contain raw XDR, RPC URLs or downstream SDK messages; full details are logged
+server-side with the wager id. Failures are mapped to stable codes:
+
+| Code | Meaning |
+|---|---|
+| `STAKE_REJECTED` | The contract rejected the stake (e.g. `PotNotOpen`, `AlreadyStaked`) |
+| `INSUFFICIENT_BALANCE` | The player's token balance is too low to stake |
+| `POT_EXPIRED` | The pot's deadline has passed or is about to; the wager is refunded |
+| `POT_NOT_STAKED` | Settlement was attempted on a pot that is not fully staked |
+| `STAKE_PENDING` | The stake transaction has not confirmed yet; retry later |
+| `INTERNAL_ERROR` | Anything unmapped; details are in the server log only |
+
 ## Tables
 
-`pvp_wagers`, `pvp_wallet_links` and `pvp_mock_pots`, created by `PVP_MIGRATIONS` (PostgreSQL 13+).
+`pvp_wagers`, `pvp_wallet_links`, `pvp_mock_pots` and `pvp_wager_events`, created by
+`PVP_MIGRATIONS` (PostgreSQL 13+).
 
 ## Tests
 

@@ -5,8 +5,13 @@ import { Sep45Service } from '../wallet/sep45.service';
 import { WalletLinkService } from '../wallet/wallet-link.service';
 import { WalletChallengeDto, WalletVerifyDto } from './dto';
 import { PlayerId, PvpPlayerGuard } from './player.guard';
+import { Sep10ChallengeDto, WalletAddressDto, WalletLinkDto } from './response.dto';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from './swagger';
 
 /** Links the signed-in player's account to a wallet they prove they own. */
+@ApiTags('wallet')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({ description: 'No signed-in player.' })
 @Controller('wallet')
 @UseGuards(PvpPlayerGuard)
 export class WalletController {
@@ -16,11 +21,16 @@ export class WalletController {
     private readonly links: WalletLinkService,
   ) {}
 
+  @ApiOperation({ summary: "The signed-in player's linked wallet" })
+  @ApiOkResponse({ type: WalletAddressDto })
   @Get()
   async get(@PlayerId() playerId: string) {
     return { address: await this.links.getAddress(playerId) };
   }
 
+  @ApiOperation({ summary: 'Get a SEP-10 challenge for a wallet to sign' })
+  @ApiOkResponse({ type: Sep10ChallengeDto })
+  @ApiBadRequestResponse()
   @Post('challenge')
   @HttpCode(200)
   challenge(@Body() dto: WalletChallengeDto) {
@@ -32,6 +42,9 @@ export class WalletController {
     return this.sep10.buildChallenge(dto.address);
   }
 
+  @ApiOperation({ summary: 'Verify a signed challenge and link the wallet' })
+  @ApiOkResponse({ type: WalletLinkDto })
+  @ApiBadRequestResponse()
   @Post('verify')
   @HttpCode(200)
   async verify(@PlayerId() playerId: string, @Body() dto: WalletVerifyDto) {

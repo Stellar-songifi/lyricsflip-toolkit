@@ -1,0 +1,47 @@
+groups:
+  - name: lyricsflip-settlement
+    rules:
+      - alert: LyricsFlipSettlementFailureRateHigh
+        expr: |
+          (
+            sum(rate(lyricsflip_settlement_total{outcome="failed"}[10m]))
+            /
+            clamp_min(sum(rate(lyricsflip_settlement_total[10m])), 0.001)
+          ) > 0.10
+          and
+          sum(increase(lyricsflip_settlement_total[10m])) >= 5
+        for: 5m
+        labels:
+          severity: page
+          service: lyricsflip-game-server
+        annotations:
+          summary: LyricsFlip settlement failures exceed 10%
+          description: More than 10% of settlement attempts failed over 10 minutes with at least five attempts.
+          runbook_url: https://github.com/Stellar-songifi/lyricsflip-toolkit/blob/main/ops/prometheus/README.md#lyricsflipsettlementfailureratehigh
+
+      - alert: LyricsFlipReconcileAttemptsExhausted
+        expr: increase(lyricsflip_reconcile_attempts_exhausted_total[5m]) > 0
+        labels:
+          severity: page
+          service: lyricsflip-game-server
+        annotations:
+          summary: A wager exhausted reconciliation attempts
+          description: At least one wager reached the configured reconciliation attempt limit and requires operator action.
+          runbook_url: https://github.com/Stellar-songifi/lyricsflip-toolkit/blob/main/ops/prometheus/README.md#lyricsflipreconcileattemptsexhausted
+
+      - alert: LyricsFlipReconcileSweepStalled
+        expr: |
+          lyricsflip_reconcile_interval_seconds > 0
+          and
+          (
+            time()
+            - (lyricsflip_reconcile_sweep_last_success_timestamp_seconds or vector(0))
+          ) > 3 * lyricsflip_reconcile_interval_seconds
+        for: 1m
+        labels:
+          severity: page
+          service: lyricsflip-game-server
+        annotations:
+          summary: LyricsFlip reconciliation sweeps are stalled
+          description: No lock-owning reconciliation sweep has completed successfully within three configured intervals.
+          runbook_url: https://github.com/Stellar-songifi/lyricsflip-toolkit/blob/main/ops/prometheus/README.md#lyricsflipreconcilesweepstalled

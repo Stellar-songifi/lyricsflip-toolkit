@@ -40,6 +40,7 @@
     "transform": { "^.+\\.[tj]s$": ["ts-jest", { "tsconfig": { "allowJs": true } }] },
     "transformIgnorePatterns": ["node_modules/(?!(@stellar|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)/)"],
     "moduleNameMapper": {
+      "^@lyricsflip-toolkit/core$": "<rootDir>/../../packages/core/src",
       "^@lyricsflip-toolkit/server$": "<rootDir>/../../packages/server/src",
       "^@lyricsflip-toolkit/sdk$": "<rootDir>/../../packages/sdk/src"
     },
