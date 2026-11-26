@@ -5,9 +5,11 @@ import { createApi, type Api, type ApiError, type User } from './api';
 import { captureException } from './errors';
 import { secureStore } from './secure-store';
 import { fundWithFriendbot, loadOrCreateWallet, signEnvelope } from './wallet';
+import { registerForPush } from './push';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 const TOKEN_KEY = 'lyricsflip.jwt';
+const PUSH_TOKEN_KEY = 'lyricsflip.push-token';
 
 interface Session {
   api: Api;
@@ -83,7 +85,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await secureStore.set(TOKEN_KEY, accessToken);
     setWallet(keypair);
     setUser(signedIn);
+    // Register for push and persist the token so signOut can unregister
+    const pushToken = await registerForPush(api).catch(() => null);
+    if (pushToken) await secureStore.set(PUSH_TOKEN_KEY, pushToken).catch(() => undefined);
   }, [api, wallet]);
+
+  const signOut = useCallback(async () => {
+    // Unregister push device before clearing credentials so we still have the token
+    const pushToken = await secureStore.get(PUSH_TOKEN_KEY);
+    if (pushToken) {
+      await api.push.unregister(pushToken).catch(() => undefined);
+      await secureStore.delete(PUSH_TOKEN_KEY);
+    }
+    token.current = null;
+    await secureStore.delete(TOKEN_KEY);
+    setUser(null);
+  }, [api]);
 
   const value = useMemo(
     () => ({ api, user, wallet, ready, signIn, signOut, refreshUser }),

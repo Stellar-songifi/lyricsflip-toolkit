@@ -275,6 +275,8 @@ export function createApi(
     push: {
       register: (token: string, platform: 'ios' | 'android') =>
         request<{ token: string }>('POST', '/push-tokens', { token, platform }),
+      unregister: (token: string) =>
+        request<void>('DELETE', `/push-tokens/${encodeURIComponent(token)}`),
     },
   };
 }
