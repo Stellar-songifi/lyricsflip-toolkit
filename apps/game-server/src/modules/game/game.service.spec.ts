@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { GameService } from './game.service';
 import { GameMode, GameSessionStatus } from './entities/game-session.entity';
 import { Difficulty } from '../lyrics/entities/lyric.entity';
@@ -486,5 +487,22 @@ describe('GameService round deadline', () => {
 
     expect(result.outcome).toBe('miss');
     expect(result.pointsAwarded).toBe(0);
+  });
+});
+
+describe('GameService.requireParticipant (issue #29)', () => {
+  it('returns the session for an authorized player', async () => {
+    const { service } = setup(5);
+    const session = await service.createSession('player1', GameMode.SOLO);
+    const result = await service.requireParticipant(session.id, 'player1');
+    expect(result.id).toBe(session.id);
+  });
+
+  it('throws ForbiddenException when user is not a participant', async () => {
+    const { service } = setup(5);
+    const session = await service.createSession('player1', GameMode.SOLO);
+    await expect(service.requireParticipant(session.id, 'intruder')).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 });

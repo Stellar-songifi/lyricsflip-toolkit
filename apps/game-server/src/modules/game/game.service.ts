@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -203,6 +204,14 @@ export class GameService {
     const session = await this.sessionsRepository.findOne({ where: { id: sessionId } });
     if (!session) {
       throw new NotFoundException(`Game session ${sessionId} not found`);
+    }
+    return session;
+  }
+
+  async requireParticipant(sessionId: string, userId: string): Promise<GameSession> {
+    const session = await this.getSession(sessionId);
+    if (!session.playerIds.includes(userId)) {
+      throw new ForbiddenException('You are not a player in this session');
     }
     return session;
   }

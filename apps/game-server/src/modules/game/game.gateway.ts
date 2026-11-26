@@ -155,6 +155,7 @@ export class GameGateway implements OnGatewayConnection {
 
   @SubscribeMessage('getSession')
   async handleGetSession(@MessageBody() payload: SessionPayload, @ConnectedSocket() client: Socket) {
+    await this.requireParticipant(payload.sessionId, client);
     const session = await this.gameService.getSession(payload.sessionId);
     client.emit('session', session);
     return session;
