@@ -28,6 +28,7 @@ import { Challenge } from './modules/challenges/entities/challenge.entity';
 import { PushToken } from './modules/push/push-token.entity';
 import { DailyChallenge } from './modules/daily/entities/daily-challenge.entity';
 import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
+import { MetricsModule } from './metrics/metrics.module';
 import { LoggerModule } from 'nestjs-pino';
 import { loggingModuleOptions } from './config/logging';
 import { RequestContextMiddleware, RequestContextModule } from './config/request-context';
@@ -100,6 +101,7 @@ import { RequestContextMiddleware, RequestContextModule } from './config/request
         };
       },
     }),
+    MetricsModule,
     AuthModule,
     UsersModule,
     LyricsModule,

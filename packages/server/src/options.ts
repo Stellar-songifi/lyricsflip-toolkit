@@ -77,6 +77,16 @@ export interface ReconcileOptions {
   maxAttempts?: number;
 }
 
+export type ReconcileSweepOutcome = 'success' | 'failed' | 'skipped';
+
+export interface ReconcileSweepObservation {
+  outcome: ReconcileSweepOutcome;
+  durationSeconds: number;
+}
+
+export interface PvpObservabilityOptions {
+  /** Called after each reconciliation sweep. Observer errors are ignored. */
+  onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
 /**
  * Durable delivery of wager events through the `pvp_wager_events` outbox.
  *
@@ -116,6 +126,8 @@ export interface PvpSettlementOptions {
   /** Seconds both players have to stake before the wager is refunded. Default 900. */
   stakeWindowSeconds?: number;
   reconcile?: ReconcileOptions;
+  /** Optional hooks for a host application's metrics implementation. */
+  observability?: PvpObservabilityOptions;
   /** Tuning for the durable event outbox. */
   outbox?: OutboxOptions;
   /**

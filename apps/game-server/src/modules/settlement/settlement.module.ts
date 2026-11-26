@@ -7,13 +7,14 @@ import { AuthModule } from '../auth/auth.module';
 import { GameModule } from '../game/game.module';
 import { SettlementListener } from './settlement.listener';
 import { settlementOptions } from './settlement.options';
+import { MetricsService } from '../../metrics/metrics.service';
 import { SettlementSweeperService } from './settlement-sweeper.service';
 
 @Module({
   imports: [
     PvpSettlementModule.forRootAsync({
       imports: [AuthModule],
-      inject: [ConfigService, JwtService, EventEmitter2],
+      inject: [ConfigService, JwtService, EventEmitter2, MetricsService],
       useFactory: settlementOptions,
     }),
     GameModule,

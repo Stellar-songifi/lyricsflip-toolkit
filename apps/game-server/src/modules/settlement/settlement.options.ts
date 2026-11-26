@@ -8,6 +8,10 @@ import { AppConfig } from '../../config/configuration';
 import { bearerToken } from '../auth/jwt.config';
 import { resolverSecretProvider } from './resolver-secret.source';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import {
+  MetricsService,
+  ReconcileSweepOutcome,
+} from '../../metrics/metrics.service';
 
 const logger = new Logger('Settlement');
 
@@ -20,6 +24,7 @@ export function settlementOptions(
   config: ConfigService<AppConfig, true>,
   jwt: JwtService,
   events: EventEmitter2,
+  metrics: MetricsService,
 ): PvpSettlementOptions {
   const stellar = config.get('stellar', { infer: true });
   const sep10 = config.get('sep10', { infer: true });
@@ -65,7 +70,18 @@ export function settlementOptions(
     onEvent: (event) => {
       events.emit(`pvp.${event.type}`, event);
     },
-  };
+    observability: {
+      onReconcileSweep: ({
+        outcome,
+        durationSeconds,
+      }: {
+        outcome: ReconcileSweepOutcome;
+        durationSeconds: number;
+      }) => {
+        metrics.observeReconcileSweep(outcome, durationSeconds);
+      },
+    },
+  } as PvpSettlementOptions;
 }
 
 /**
