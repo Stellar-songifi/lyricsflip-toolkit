@@ -34,7 +34,7 @@
     "class-validator": "^0.14.1"
   },
   "devDependencies": {
-    "@nestjs/common": "^11.0.1",
+    "@nestjs/common": "^12.6.0",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.4.7",
