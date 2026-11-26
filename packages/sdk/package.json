@@ -28,7 +28,7 @@
     "@types/node": "^20.17.9",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
-    "typescript": "^5.7.2"
+    "typescript": "^7.0.2"
   },
   "jest": {
     "moduleFileExtensions": [
