@@ -34,7 +34,7 @@ jobs:
       - name: Build the SDK the app depends on
         run: npm run build -w @lyricsflip-toolkit/sdk
 
-      - uses: expo/expo-github-action@v8
+      - uses: expo/expo-github-action@v9
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
