@@ -47,6 +47,7 @@ export const PvpEscrowError = {
   DeadlinePassed: 14,
   DeadlineNotReached: 15,
   NothingToClaim: 16,
+  Paused: 17,
 } as const;
 
 const STATUSES: OnChainPotStatus[] = ['open', 'staked', 'resolved', 'refunded'];

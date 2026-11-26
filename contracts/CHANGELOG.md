@@ -4,6 +4,22 @@ Notable changes to the contracts in this workspace. The crate version in each
 `Cargo.toml` tracks the deployed Wasm, so a bump here is what tells operators a
 redeploy is needed.
 
+## pvp-escrow 0.2.0
+
+### Added
+
+- **`pause` / `unpause` / `is_paused`** (admin only). While paused, `open_pot`
+  and `stake` fail with the new `Error::Paused` (17); `resolve`, `refund` and
+  `claim_refund` keep working so in-flight pots can still be settled or
+  returned. Publishes `Paused { admin }` / `Unpaused { admin }`.
+- **`upgrade(new_wasm_hash)`** (admin only): in-place code upgrade through
+  `update_current_contract_wasm`, publishing `Upgraded { new_wasm_hash }`. See
+  `pvp-escrow/docs/upgrade.md` for when to use it and the runbook.
+- New `DataKey::Paused` instance key. Existing storage is unchanged, so this
+  version can itself be shipped in place over 0.1.x once deployed with
+  `upgrade` support — 0.1.x has no `upgrade` entry point, so moving off 0.1.x
+  needs one new deployment.
+
 ## pvp-escrow 0.1.1
 
 ### Changed

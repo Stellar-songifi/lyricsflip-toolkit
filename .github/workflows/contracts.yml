@@ -52,5 +52,26 @@ jobs:
       - name: Build (wasm32v1-none, release)
         run: cargo build --target wasm32v1-none --release
 
+      - name: Wasm size ceiling
+        # Soroban rejects contract code over 64 KiB (65,536 bytes). Fail well
+        # before that, at 48 KiB, so there is headroom for a fix to ship.
+        run: |
+          size=$(wc -c < target/wasm32v1-none/release/pvp_escrow.wasm)
+          limit=49152
+          echo "pvp_escrow.wasm: ${size} bytes (CI limit ${limit}, network limit 65536)"
+          echo "### pvp_escrow.wasm: ${size} bytes (limit ${limit})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::pvp_escrow.wasm is ${size} bytes, over the ${limit}-byte CI limit"
+            exit 1
+          fi
+
       - name: cargo test
+        run: cargo test --workspace
+
+      - name: Resource-cost gate and Wasm-based tests
+        # Runs the #[ignore]d tests that need the release Wasm built above:
+        # the per-entry-point cost gate against pvp-escrow/cost-baseline.txt
+        # (fails on >15% instruction/memory growth or any new ledger
+        # read/write) and the in-place upgrade test.
+        run: cargo test -p pvp-escrow -- --ignored --nocapture
         run: cargo test --workspace
