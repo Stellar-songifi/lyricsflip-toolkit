@@ -32,7 +32,7 @@
     "@lyricsflip-toolkit/sdk": "0.1.0",
     "@stellar/js-xdr": "^5.0.0",
     "@stellar/stellar-sdk": "^17.2.0",
-    "class-validator": "^0.14.1"
+    "class-validator": "^0.15.1"
   },
   "devDependencies": {
     "@nestjs/common": "^11.0.1",
