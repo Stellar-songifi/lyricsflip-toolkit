@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Repository } from 'typeorm';
+import { In, Raw, Repository } from 'typeorm';
 import { GameSession, GameSessionStatus, GameMode } from './entities/game-session.entity';
 import { LyricsService } from '../lyrics/lyrics.service';
 import { UsersService } from '../users/users.service';
@@ -208,6 +208,16 @@ export class GameService {
     return session;
   }
 
+  /** Finished/cancelled sessions the player took part in, newest first. */
+  async historyForUser(userId: string, limit = 50): Promise<GameSession[]> {
+    return this.sessionsRepository.find({
+      where: {
+        playerIds: Raw((alias) => `:userId = ANY(${alias})`, { userId }),
+        status: In([GameSessionStatus.FINISHED, GameSessionStatus.CANCELLED]),
+      },
+      order: { createdAt: 'DESC' },
+      take: Math.min(limit, 100),
+    });
   async requireParticipant(sessionId: string, userId: string): Promise<GameSession> {
     const session = await this.getSession(sessionId);
     if (!session.playerIds.includes(userId)) {

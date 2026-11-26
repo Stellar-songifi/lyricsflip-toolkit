@@ -49,6 +49,7 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      ["@sentry/react-native", { "enableNativeCrashHandling": true }],
       [
         "expo-notifications",
         {

@@ -95,4 +95,53 @@ describe('api client', () => {
       jest.useRealTimers();
     }
   });
+
+  it('signs out on 401 and leaves every other status to the caller', async () => {
+    const onUnauthorized = jest.fn();
+    const api = createApi('http://server', () => 'jwt', fakeFetch(401, { message: 'expired' }) as never, 30_000, {
+      onUnauthorized,
+    });
+    await expect(api.users.me()).rejects.toEqual(new ApiError(401, 'expired'));
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+    const forbidden = createApi('http://server', () => 'jwt', fakeFetch(403, { message: 'no' }) as never, 30_000, {
+      onUnauthorized,
+    });
+    await expect(forbidden.users.me()).rejects.toEqual(new ApiError(403, 'no'));
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries idempotent reads on 5xx but not writes', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => JSON.stringify({ message: 'down' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ id: 'u1' }) });
+    const api = createApi('http://server', () => 'jwt', fetchImpl as never);
+    await expect(api.users.me()).resolves.toEqual({ id: 'u1' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    const write = jest.fn().mockResolvedValue({ ok: false, status: 503, text: async () => '{}' });
+    const writeApi = createApi('http://server', () => 'jwt', write as never);
+    await expect(writeApi.game.guess('s1', 'Firework')).rejects.toEqual(new ApiError(503, 'Request failed (503)'));
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks non-idempotent writes while offline', async () => {
+    const fetchImpl = fakeFetch(200, {});
+    const api = createApi('http://server', () => 'jwt', fetchImpl as never, 30_000, { isOnline: () => false });
+    await expect(api.game.guess('s1', 'Firework')).rejects.toMatchObject({ status: 0 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('exposes notification pagination, mark-read and match-history paths', async () => {
+    const fetchImpl = fakeFetch(200, [{ id: 'n1' }]);
+    const api = createApi('http://server', () => 'jwt', fetchImpl as never);
+    await api.notifications.list({ unreadOnly: true, cursor: 'c1' });
+    expect(fetchImpl.mock.calls[0][0]).toBe('http://server/notifications?cursor=c1&unread=true');
+    await api.notifications.markRead('n1');
+    expect(fetchImpl.mock.calls[1][0]).toBe('http://server/notifications/n1/read');
+    expect(fetchImpl.mock.calls[1][1].method).toBe('POST');
+    await api.game.history();
+    expect(fetchImpl.mock.calls[2][0]).toBe('http://server/game/history');
+  });
 });

@@ -12,3 +12,7 @@ npx expo start
 
 Screens are in `app/`, and shared code in `src/`. The wallet is a testnet-only key on the device. Everything
 else (features, push, deep links, React Native polyfills) is in [`docs/mobile.md`](../../docs/mobile.md).
+
+The app has an in-app notifications inbox, a leaderboard, and match history. Crashes are reported to
+Sentry when `EXPO_PUBLIC_SENTRY_DSN` is set, and offline state is shown with a banner.
+Builds and releases are documented in [`docs/release.md`](../../docs/release.md).

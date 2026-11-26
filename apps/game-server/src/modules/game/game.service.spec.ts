@@ -59,6 +59,7 @@ function createMockSessionsRepo() {
   return {
     create: jest.fn((input: Record<string, unknown>) => ({ ...input })),
     save: jest.fn(save),
+    find: jest.fn(async () => []),
     findOne: jest.fn(findOne),
     update: jest.fn(update),
     manager,
@@ -148,6 +149,22 @@ describe('GameService session length', () => {
     await service.submitGuess(session.id, 'host', 'wrong');
     const third = await service.submitGuess(session.id, 'host', 'wrong');
     expect(third.sessionStatus).toBe(GameSessionStatus.FINISHED);
+  });
+
+  it('lists only finished sessions the player played, newest first', async () => {
+    const { service, repo } = setup(10);
+    await service.historyForUser('host');
+
+    expect(repo.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: expect.anything(),
+          playerIds: expect.anything(),
+        }),
+        order: { createdAt: 'DESC' },
+        take: 50,
+      }),
+    );
   });
 
   it('refuses a per-session round count that is not a positive integer', async () => {
