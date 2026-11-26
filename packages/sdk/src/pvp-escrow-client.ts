@@ -162,9 +162,14 @@ export class PvpEscrowClient {
     return { admin: String(raw.admin), resolver: String(raw.resolver), token: String(raw.token) };
   }
 
-  private async invokeAsResolver(resolver: Keypair, method: string, args: xdr.ScVal[]): Promise<Submission> {
-    const transaction = await this.rpc.buildInvocation(resolver.publicKey(), this.contractId, method, args);
-    return this.rpc.signAndSubmit(transaction, [resolver]);
+  /**
+   * Resolver calls go through `submitSequenced`, so concurrent settlements
+   * from one process never collide on the resolver's sequence number (#59).
+   */
+  private invokeAsResolver(resolver: Keypair, method: string, args: xdr.ScVal[]): Promise<Submission> {
+    return this.rpc.submitSequenced(resolver, (account) =>
+      this.rpc.buildInvocation(account, this.contractId, method, args),
+    );
   }
 }
 

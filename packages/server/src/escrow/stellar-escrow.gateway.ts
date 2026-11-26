@@ -1,7 +1,8 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions, StellarSettlementOptions } from '../options';
 import { ResolverKeyProvider } from './resolver-secret';
+import { FeeSponsor } from './fee-sponsor';
 import {
   InvalidStakeEnvelopeError,
   PvpEscrowClient,
@@ -34,11 +35,13 @@ import {
  * network); anything submitted but unconfirmed is `pending`.
  */
 @Injectable()
-export class StellarEscrowGateway implements EscrowGateway {
+export class StellarEscrowGateway implements EscrowGateway, OnApplicationBootstrap {
   readonly mode = 'stellar' as const;
   private readonly logger = new Logger(StellarEscrowGateway.name);
   private readonly config: StellarSettlementOptions;
   private readonly resolverKeys: ResolverKeyProvider;
+  /** Pays players' stake fees when `feeSponsorSecret` is set (#60). */
+  readonly feeSponsor: FeeSponsor | null;
   readonly client: PvpEscrowClient;
 
   constructor(@Inject(PVP_SETTLEMENT_OPTIONS) options: PvpSettlementOptions) {
@@ -61,6 +64,9 @@ export class StellarEscrowGateway implements EscrowGateway {
       httpTimeoutMs: this.config.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs,
     });
     this.client = new PvpEscrowClient(rpc, this.config.escrowContractId);
+    this.feeSponsor = this.config.feeSponsorSecret
+      ? new FeeSponsor(this.config.feeSponsorSecret, this.config.feeSponsorship)
+      : null;
   }
 
   /**
@@ -74,6 +80,53 @@ export class StellarEscrowGateway implements EscrowGateway {
   /** The resolver public key right now, re-reading through the provider if it is due. */
   async currentResolverAddress(): Promise<string> {
     return (await this.resolverKeys.resolve()).publicKey();
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.checkContractConfig();
+  }
+
+  /**
+   * Checks the deployed contract against this server's settings (#58): that
+   * `escrowContractId` answers `get_config`, that its resolver is the key we
+   * sign with and that its token is `tokenContractId`. Logs the admin so an
+   * operator can confirm it is the expected multisig. Throws (or warns, with
+   * `configCheck: 'warn'`) on a mismatch, so a wrong contract id or a resolver
+   * rotated on-chain but not here fails at boot instead of at the first pot.
+   */
+  async checkContractConfig(): Promise<void> {
+    const mode = this.config.configCheck ?? 'fail';
+    if (mode === 'off') return;
+
+    const problems: string[] = [];
+    try {
+      const onChain = await this.client.getConfig();
+      const resolver = await this.currentResolverAddress();
+      this.logger.log(
+        `Escrow ${this.config.escrowContractId}: admin ${onChain.admin}, resolver ${onChain.resolver}, token ${onChain.token}`,
+      );
+      if (onChain.resolver !== resolver) {
+        problems.push(
+          `its resolver is ${onChain.resolver}, but this server signs as ${resolver} ` +
+            '(rotate the key here or call set_resolver on-chain)',
+        );
+      }
+      if (onChain.token !== this.config.tokenContractId) {
+        problems.push(`its token is ${onChain.token}, but tokenContractId is ${this.config.tokenContractId}`);
+      }
+    } catch (err) {
+      problems.push(
+        `get_config failed (${(err as Error).message}); is escrowContractId a pvp-escrow deployment on this network?`,
+      );
+    }
+    if (problems.length === 0) return;
+
+    const message = `Escrow contract ${this.config.escrowContractId} does not match this server: ${problems.join('; ')}`;
+    if (mode === 'warn') {
+      this.logger.warn(`${message} (continuing because stellar.configCheck is "warn")`);
+      return;
+    }
+    throw new Error(`${message}. Set stellar.configCheck to "warn" to boot anyway during a rotation.`);
   }
 
   async openPot(params: OpenPotParams): Promise<OpenPotOutcome> {
@@ -133,6 +186,13 @@ export class StellarEscrowGateway implements EscrowGateway {
     } catch (err) {
       if (err instanceof InvalidStakeEnvelopeError) throw new BadRequestException(err.message);
       throw new BadRequestException('Not a valid signed transaction envelope');
+    }
+    if (this.feeSponsor) {
+      // The player's envelope was checked above; the fee-bump wraps it
+      // unchanged and only the fee account pays.
+      const { transaction: sponsored, maxFee } = this.client.rpc.sponsorFee(transaction, this.feeSponsor.keypair);
+      this.feeSponsor.reserve(playerId, maxFee);
+      return toOutcome(await this.client.rpc.submit(sponsored));
     }
     return toOutcome(await this.client.rpc.submit(transaction));
   }

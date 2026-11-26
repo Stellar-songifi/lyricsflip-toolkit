@@ -59,6 +59,61 @@ Each pot carries a `deadline_ledger` (`potTimeoutLedgers`, default about a day).
 contract refuses new stakes, and each player can call `claim_refund` to recover their own stake without
 the server. Once anyone has claimed, `resolve` is refused for that pot.
 
+## Resolver transactions and sequence numbers
+
+Every resolver call (`open_pot`, `resolve`, `refund`) is a Stellar transaction
+whose source is an account, and an account's transactions must use strictly
+increasing sequence numbers. If two settlements build from the same account
+at the same time they take the same number, and one is rejected with
+`txBAD_SEQ`.
+
+### Today: one queue per process (#59)
+
+`SorobanRpc.submitSequenced` serialises submissions per source account inside
+a process:
+
+1. A submission waits for the previous one from the same account to be
+   **accepted** by the network (not confirmed), then builds from a locally
+   tracked sequence number — no `getAccount` round-trip per call.
+2. Once the network accepts the transaction, its sequence is recorded as
+   spent, the lock is released, and the confirmation poll runs outside the
+   lock. Throughput is bounded by submission latency, not ledger close time.
+3. A `txBAD_SEQ` rejection means the local view is stale (another process or
+   instance used the account). The sequence is re-read from the network and
+   the transaction rebuilt and resent at once, up to `badSeqRetries` times
+   (default 3), instead of reporting `failed`.
+4. A submission whose outcome is unknown (network error) drops the cached
+   sequence, so the next one re-reads it.
+
+`PvpEscrowClient` sends every resolver call through it. This removes
+collisions within one process. Several game-server instances sharing one
+resolver still race each other, but each collision is now a quick rebuild
+rather than a failed settlement.
+
+### Next step: channel accounts
+
+For many instances, or more throughput than one account can give, use a pool
+of **channel accounts**:
+
+- Keep *N* funded accounts with no authority over the contract. Each resolver
+  transaction takes a free channel account as its **source** (sequence number
+  and fee) and returns it when the network accepts the transaction.
+- The resolver key no longer needs to be the source. It signs only the
+  Soroban **authorisation entry** for the call (`require_resolver` checks the
+  resolver's auth, not the transaction source), exactly like the relayed
+  smart-wallet stakes in #62. Build with simulation in recording mode, sign
+  the resolver's entry, re-simulate in enforcing mode, then sign the envelope
+  with the channel account.
+- Pool size bounds concurrency: with *N* channels, *N* settlements can be in
+  flight at once with no shared sequence. Each channel still goes through
+  `submitSequenced`, so a channel shared by mistake degrades to retries, not
+  failures.
+- Each instance should own its own channels (e.g. derived from one seed with
+  an index per instance), so instances never share a sequence.
+- Channel accounts only pay fees; keep their balance low, top them up from a
+  fee account, and alert when one runs low. Losing a channel key costs at
+  most its XLM balance, because it can't authorise anything in the escrow.
+
 ## Modes
 
 | Variable | Values | Notes |

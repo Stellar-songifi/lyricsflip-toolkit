@@ -1,6 +1,7 @@
 import {
   Account,
   Contract,
+  FeeBumpTransaction,
   Keypair,
   Transaction,
   TransactionBuilder,
@@ -50,6 +51,8 @@ export interface SorobanRpcOptions {
   pollAttempts?: number;
   /** Resubmissions when the network queue is full. Default 5. */
   tryAgainAttempts?: number;
+  /** Immediate retries, with a refreshed sequence number, after `txBAD_SEQ`. Default 3. */
+  badSeqRetries?: number;
 }
 
 const DEFAULT_MAX_FEE = 10_000_000n;
@@ -74,6 +77,11 @@ export class SorobanRpc {
   private readonly timeoutSeconds: number;
   private readonly pollAttempts: number;
   private readonly tryAgainAttempts: number;
+  private readonly badSeqRetries: number;
+  /** Last sequence number this process spent, per source account. */
+  private readonly sequences = new Map<string, string>();
+  /** Tail of the queue of submissions per source account. */
+  private readonly sourceLocks = new Map<string, Promise<void>>();
 
   constructor(options: SorobanRpcOptions) {
     this.server = new rpc.Server(options.rpcUrl, { allowHttp: options.rpcUrl.startsWith('http://') });
@@ -92,6 +100,7 @@ export class SorobanRpc {
     this.timeoutSeconds = options.timeoutSeconds ?? 60;
     this.pollAttempts = options.pollAttempts ?? 30;
     this.tryAgainAttempts = options.tryAgainAttempts ?? 5;
+    this.badSeqRetries = options.badSeqRetries ?? 3;
   }
 
   /**
@@ -100,13 +109,13 @@ export class SorobanRpc {
    * Throws if simulation fails; nothing has been submitted at that point.
    */
   async buildInvocation(
-    source: string,
+    source: string | Account,
     contractId: string,
     method: string,
     args: xdr.ScVal[],
     timeoutSeconds = this.timeoutSeconds,
   ): Promise<Transaction> {
-    const account = await this.server.getAccount(source);
+    const account = typeof source === 'string' ? await this.server.getAccount(source) : source;
     const transaction = new TransactionBuilder(account, {
       fee: await this.inclusionFee(),
       networkPassphrase: this.networkPassphrase,
@@ -141,6 +150,86 @@ export class SorobanRpc {
     return scValToNative(simulation.result.retval);
   }
 
+  /**
+   * Builds, signs and submits a transaction from `signer`'s account without
+   * two concurrent calls colliding on its sequence number (#59).
+   *
+   * Calls for the same account are serialised from building until the network
+   * has *accepted* the transaction, using a locally tracked sequence number;
+   * waiting for the ledger happens outside the lock, so throughput isn't
+   * limited by confirmation time. A `txBAD_SEQ` rejection (another process, or
+   * a stale cache) refreshes the sequence from the network and retries at
+   * once, up to `badSeqRetries` times, instead of surfacing as a failure.
+   */
+  async submitSequenced(
+    signer: Keypair,
+    build: (account: Account) => Promise<Transaction>,
+  ): Promise<Submission> {
+    const source = signer.publicKey();
+    type Queued = { done: Submission } | { hash: string };
+    const queued = await this.withSourceLock<Queued>(source, async () => {
+      for (let attempt = 0; ; attempt++) {
+        const cached = this.sequences.get(source) ?? (await this.server.getAccount(source)).sequenceNumber();
+        // TransactionBuilder bumps the account it is given; hand it a copy.
+        const transaction = await build(new Account(source, cached));
+        transaction.sign(signer);
+        const hash = hashHex(transaction);
+        let sent: rpc.Api.SendTransactionResponse;
+        try {
+          sent = await this.sendWithBackoff(transaction);
+        } catch (err) {
+          // Unknown whether it reached the network: the sequence may be spent.
+          this.sequences.delete(source);
+          return { done: { status: 'pending', hash, error: `Submission error: ${message(err)}` } };
+        }
+        if (sent.status === 'ERROR') {
+          this.sequences.delete(source); // nothing was consumed, or our view is stale
+          if (isBadSeq(sent) && attempt < this.badSeqRetries) continue;
+          return {
+            done: {
+              status: 'failed',
+              hash,
+              error: `Rejected by the network: ${sent.errorResult?.toXDR('base64') ?? 'no result'}`,
+            },
+          };
+        }
+        if (sent.status === 'TRY_AGAIN_LATER') {
+          this.sequences.delete(source);
+          return { done: { status: 'failed', hash, error: 'Network queue full (TRY_AGAIN_LATER)' } };
+        }
+        // Accepted: the sequence is spent whether or not the transaction succeeds.
+        this.sequences.set(source, transaction.sequence);
+        return { hash };
+      }
+    });
+    if ('done' in queued) return queued.done;
+    return this.waitFor(queued.hash);
+  }
+
+  /** Runs `task` after every earlier task for `source` has finished. */
+  private async withSourceLock<T>(source: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.sourceLocks.get(source) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => (release = resolve));
+    const chained = previous.then(() => current);
+    this.sourceLocks.set(source, chained);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.sourceLocks.get(source) === chained) this.sourceLocks.delete(source);
+    }
+  }
+
+  private async sendWithBackoff(transaction: Transaction): Promise<rpc.Api.SendTransactionResponse> {
+    for (let attempt = 0; ; attempt++) {
+      const sent = await this.server.sendTransaction(transaction);
+      if (sent.status !== 'TRY_AGAIN_LATER' || attempt >= this.tryAgainAttempts) return sent;
+      await sleep(500 * 2 ** attempt);
+    }
+  }
+
   /** Signs with `signers` and submits. */
   async signAndSubmit(transaction: Transaction, signers: Keypair[]): Promise<Submission> {
     for (const signer of signers) transaction.sign(signer);
@@ -152,7 +241,7 @@ export class SorobanRpc {
    * `sendTransaction` only queues; a queued transaction can still fail, so
    * this polls before reporting anything as confirmed.
    */
-  async submit(transaction: Transaction): Promise<Submission> {
+  async submit(transaction: Transaction | FeeBumpTransaction): Promise<Submission> {
     const hash = hashHex(transaction);
     let sent: rpc.Api.SendTransactionResponse;
     for (let attempt = 0; ; attempt++) {
@@ -203,6 +292,29 @@ export class SorobanRpc {
     }
   }
 
+  /**
+   * Wraps a player-signed `inner` transaction in a fee-bump paid by
+   * `feeSource` (#60), so the player needs no XLM for fees. The inner
+   * transaction is unchanged, so its signatures and checks
+   * (`assertIsStake`) still apply. Returns the signed fee-bump and the most it
+   * can cost, in stroops.
+   *
+   * Only the server builds fee-bumps: `fromXdr` keeps refusing fee-bump
+   * envelopes sent by clients.
+   */
+  sponsorFee(inner: Transaction, feeSource: Keypair): { transaction: FeeBumpTransaction; maxFee: bigint } {
+    // The fee-bump's per-operation rate must cover the inner rate, including
+    // the Soroban resource fee, so bid the inner fee per operation.
+    const transaction = TransactionBuilder.buildFeeBumpTransaction(
+      feeSource,
+      inner.fee,
+      inner,
+      this.networkPassphrase,
+    );
+    transaction.sign(feeSource);
+    return { transaction, maxFee: BigInt(transaction.fee) };
+  }
+
   /** Deserialises an envelope a wallet signed and returned. */
   fromXdr(envelope: string): Transaction {
     const parsed = TransactionBuilder.fromXDR(envelope, this.networkPassphrase);
@@ -233,7 +345,7 @@ export class SimulationError extends Error {
 }
 
 /** Hex hash; `Transaction.hash()` is a Uint8Array with no radix `toString`. */
-export function hashHex(transaction: Transaction): string {
+export function hashHex(transaction: Transaction | FeeBumpTransaction): string {
   return bytesToHex(transaction.hash());
 }
 
@@ -250,6 +362,12 @@ function toSubmission(hash: string, result: rpc.Api.GetTransactionResponse): Sub
     return { status: 'failed', hash, ledger: result.ledger, error: 'Transaction failed on-chain' };
   }
   return { status: 'pending', hash, error: 'Not visible on the network yet' };
+}
+
+/** True when the network rejected a transaction for a stale sequence number. */
+export function isBadSeq(sent: rpc.Api.SendTransactionResponse): boolean {
+  const result = sent.errorResult?.result as { type?: string } | undefined;
+  return result?.type === 'txBadSeq';
 }
 
 function message(err: unknown): string {

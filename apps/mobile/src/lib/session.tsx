@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Keypair } from '@stellar/stellar-sdk';
-import { API_TIMEOUT_MS, API_URL } from './config';
+import { API_TIMEOUT_MS, API_URL, FRIENDBOT_URL } from './config';
 import { createApi, type Api, type User } from './api';
 import { secureStore } from './secure-store';
 import { fundWithFriendbot, loadOrCreateWallet, signEnvelope } from './wallet';
@@ -50,7 +50,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async () => {
     const keypair = wallet ?? (await loadOrCreateWallet(secureStore));
-    await fundWithFriendbot(keypair.publicKey());
+    // Test networks: get XLM from friendbot. With server fee sponsorship (#60)
+    // set EXPO_PUBLIC_FRIENDBOT_URL to an empty string: stakes are fee-bumped
+    // by the server, so the wallet only needs the stake token.
+    if (FRIENDBOT_URL) await fundWithFriendbot(keypair.publicKey());
     const challenge = await api.auth.challenge(keypair.publicKey());
     const signed = signEnvelope(keypair, challenge.transactionXdr, challenge.networkPassphrase);
     const { accessToken, user: signedIn } = await api.auth.verify(keypair.publicKey(), signed);

@@ -13,6 +13,7 @@ import { WagerReconcilerService } from './reconcile/wager-reconciler.service';
 import { Wager } from './wager/wager.entity';
 import { WagerService } from './wager/wager.service';
 import { Sep10Service } from './wallet/sep10.service';
+import { Sep45Service } from './wallet/sep45.service';
 import { Sep10CleanupService } from './wallet/sep10-cleanup.service';
 import { Sep10Redeemed } from './wallet/sep10-redeemed.entity';
 import { WalletLink } from './wallet/wallet-link.entity';
@@ -86,12 +87,13 @@ export class PvpSettlementModule {
         },
         WalletLinkService,
         Sep10Service,
+        Sep45Service,
         Sep10CleanupService,
         WagerService,
         WagerReconcilerService,
         PvpPlayerGuard,
       ],
-      exports: [WagerService, WalletLinkService, Sep10Service, ESCROW_GATEWAY, PVP_SETTLEMENT_OPTIONS],
+      exports: [WagerService, WalletLinkService, Sep10Service, Sep45Service, ESCROW_GATEWAY, PVP_SETTLEMENT_OPTIONS],
     };
   }
 }

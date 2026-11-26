@@ -30,8 +30,9 @@ What it would change in this toolkit:
   an **authorization entry**, and a relayer supplies the source and fee. `StellarEscrowGateway` would need
   a second path that accepts a signed auth entry and submits through a relayer.
 - **Login can't use SEP-10.** SEP-10 proves control of a `G...` account. Contract accounts need
-  [SEP-45](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0045.md), which
-  `Sep10Service` doesn't implement.
+  [SEP-45](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0045.md).
+  *Done (#61):* `Sep45Service` builds and verifies SEP-45 challenges against a deployed web auth
+  contract, and the `/wallet` routes use it for `C...` addresses (see `sep45` in the server README).
 - **Fees.** Someone pays for smart-wallet deployment and every stake, either the relayer or the app.
 - **Custody and recovery.** Passkeys sync through iCloud Keychain or Google Password Manager. That's
   good for recovery, but the wallet contract's signer rules become part of the threat model.
@@ -59,7 +60,7 @@ funds it from testnet friendbot, and signs SEP-10 challenges and stakes locally.
    other than testnet's. It unblocks sign-in, stakes, push and deep links now, in Expo Go.
 2. **Next: option A in a development build**, as its own project:
    - add a relayer-submitted, auth-entry stake path to `StellarEscrowGateway`;
-   - add SEP-45 login next to SEP-10;
+   - ~~add SEP-45 login next to SEP-10~~ (done, #61);
    - pick `stellar/passkey-kit` or `stellar/smart-account-kit` once one has a React Native story and an audit;
    - host the associated-domain files.
 3. **Keep option B as the fallback** for players who already use a wallet app.

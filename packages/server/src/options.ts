@@ -52,6 +52,32 @@ export interface StellarSettlementOptions {
    * request handler indefinitely and the wager never returns to the reconciler.
    */
   httpTimeoutMs?: number;
+  /**
+   * What to do at boot when the contract at `escrowContractId` doesn't match
+   * this server (#58): its `get_config` must answer, its resolver must be the
+   * key this server signs with, and its token must be `tokenContractId`.
+   * - `fail` (default): refuse to boot.
+   * - `warn`: log and boot anyway, e.g. while a resolver rotation is in flight.
+   * - `off`: skip the check.
+   */
+  configCheck?: 'fail' | 'warn' | 'off';
+  /**
+   * Secret (S...) of a fee account that pays players' stake fees through a
+   * fee-bump (#60), so players need the stake token but no XLM for fees.
+   * Optional; without it players pay their own fees.
+   */
+  feeSponsorSecret?: string;
+  /** Limits on fee sponsorship. */
+  feeSponsorship?: FeeSponsorshipOptions;
+}
+
+export interface FeeSponsorshipOptions {
+  /** Most a single sponsored stake may cost, in stroops. Default 10,000,000 (1 XLM). */
+  maxFeePerStakeStroops?: number | bigint;
+  /** Most all sponsored stakes may cost per UTC day, in stroops. Default 1,000,000,000 (100 XLM). */
+  dailyBudgetStroops?: number | bigint;
+  /** Sponsored stakes per player per UTC day. Default 20. */
+  maxStakesPerPlayerPerDay?: number;
 }
 
 export interface Sep10Options {
@@ -64,6 +90,22 @@ export interface Sep10Options {
   networkPassphrase: string;
   /** Seconds a challenge stays valid. Default 300. */
   challengeTtlSeconds?: number;
+}
+
+/**
+ * SEP-45 web auth for contract accounts (`C...`, e.g. passkey wallets), #61.
+ * Uses `sep10`'s signing key, home domain and network passphrase. The signing
+ * key's account must **exist on the network** (it needs no balance beyond the
+ * reserve): the web auth contract checks the server's authorisation, and
+ * Soroban can only verify a `G...` signer that has an account.
+ */
+export interface Sep45Options {
+  /** The deployed SEP-45 web auth contract (`WEB_AUTH_CONTRACT_ID`). */
+  webAuthContractId: string;
+  /** Soroban RPC used to simulate the challenge. */
+  rpcUrl: string;
+  /** Ledgers a challenge, and the wallet's signature, stay valid. Default 60 (~5 min). */
+  challengeLedgers?: number;
 }
 
 export interface ReconcileOptions {
@@ -83,6 +125,8 @@ export interface PvpSettlementOptions {
   stellar?: StellarSettlementOptions;
   /** Enables the wallet-linking endpoints and `Sep10Service`. */
   sep10?: Sep10Options;
+  /** Enables wallet linking for contract accounts through SEP-45. Needs `sep10`. */
+  sep45?: Sep45Options;
   /**
    * Identifies the player making an HTTP request, or returns `null` when the
    * request is not authenticated. The toolkit's controllers only act for the
@@ -147,6 +191,12 @@ export function validateOptions(options: PvpSettlementOptions): void {
           'needs an explicit, audited opt-in that this toolkit does not provide.',
       );
     }
+  }
+  if (options.sep45 && !options.sep10) {
+    throw new Error('sep45 needs sep10 (its signing key, home domain and network passphrase)');
+  }
+  if (options.sep45 && (!options.sep45.webAuthContractId || !options.sep45.rpcUrl)) {
+    throw new Error('sep45 needs webAuthContractId and rpcUrl');
   }
   if (options.sep10 && !options.sep10.signingSecret) {
     throw new Error('sep10.signingSecret is required when SEP-10 is enabled');
