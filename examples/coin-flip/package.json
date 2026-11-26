@@ -12,7 +12,7 @@
   "dependencies": {
     "@lyricsflip-toolkit/server": "0.1.0",
     "@nestjs/common": "^11.0.1",
-    "@nestjs/core": "^11.0.1",
+    "@nestjs/core": "^12.6.0",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/typeorm": "^11.0.3",
     "class-validator": "^0.14.1",
