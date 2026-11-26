@@ -37,7 +37,7 @@
   "devDependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
-    "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-express": "^12.6.0",
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/testing": "^11.0.1",
     "@nestjs/typeorm": "^11.0.3",
