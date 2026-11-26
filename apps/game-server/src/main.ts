@@ -1,7 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { join } from 'path';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { IoAdapter } from '@nestjs/platform-socket.io';
@@ -51,6 +53,11 @@ class CorsIoAdapter extends IoAdapter {
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Serve .well-known/ files for iOS Universal Links (apple-app-site-association)
+  // and Android App Links (assetlinks.json) verification by platform crawlers.
+  app.useStaticAssets(join(__dirname, '..', 'public'));
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const configService = app.get(ConfigService<AppConfig, true>);
 
@@ -135,6 +142,11 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup('api/docs', app, document);
   }
+
+  // Enable NestJS shutdown lifecycle hooks so OnModuleDestroy is called on
+  // SIGTERM/SIGINT (required for WagerReconcilerService and Sep10CleanupService
+  // to clear their setInterval timers during graceful shutdown).
+  app.enableShutdownHooks();
 
   const port = configService.get('port', { infer: true });
   await app.listen(port);
