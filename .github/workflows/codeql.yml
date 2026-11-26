@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Run weekly on Mondays at 03:00 UTC
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze-javascript-typescript:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # Use the extended security queries for broader vulnerability coverage.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+
+  # Rust support in CodeQL:
+  # CodeQL's Rust support is relatively new and more limited than the mature
+  # javascript-typescript queries. As of the time of writing, Rust analysis in
+  # CodeQL requires building the code and is still experimental/limited in
+  # coverage. Rather than add a fragile Rust CodeQL job, Rust source under
+  # `contracts/` is covered by `cargo clippy` (and `cargo test`) in the
+  # `contracts.yml` workflow. If CodeQL's Rust support matures, a dedicated
+  # `analyze-rust` job can be added here using:
+  #
+  #   - name: Initialize CodeQL
+  #     uses: github/codeql-action/init@v3
+  #     with:
+  #       languages: rust
+  #
+  #   - name: Perform CodeQL Analysis
+  #     uses: github/codeql-action/analyze@v3
+  #     with:
+  #       category: '/language:rust'
