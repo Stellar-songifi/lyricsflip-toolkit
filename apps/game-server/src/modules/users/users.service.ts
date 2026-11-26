@@ -3,6 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LEVEL_THRESHOLDS, PlayerLevel, User } from './entities/user.entity';
 
+export const LEADERBOARD_DEFAULT_LIMIT = 20;
+export const LEADERBOARD_MAX_LIMIT = 100;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -47,10 +50,13 @@ export class UsersService {
     return user;
   }
 
-  async getLeaderboard(limit = 20): Promise<User[]> {
+  async getLeaderboard(limit = LEADERBOARD_DEFAULT_LIMIT): Promise<User[]> {
+    const safeLimit = Number.isFinite(limit)
+      ? Math.min(Math.max(Math.trunc(limit), 1), LEADERBOARD_MAX_LIMIT)
+      : LEADERBOARD_DEFAULT_LIMIT;
     return this.usersRepository.find({
       order: { xp: 'DESC' },
-      take: limit,
+      take: safeLimit,
     });
   }
 
