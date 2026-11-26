@@ -18,7 +18,11 @@ One pot per head-to-head match, keyed by the game server's session UUID (its 16 
 | `resolve(session_id, winner)` | resolver | Pays both stakes to `winner`, who must be one of the pot's two players. Needs both stakes in. |
 | `refund(session_id)` | resolver | Returns each stake that was made to whoever made it. |
 | `claim_refund(session_id, player)` | player | After the deadline, returns `player`'s own stake. No resolver needed. |
-| `set_resolver(resolver)` / `set_admin(admin)` | admin | Rotates a role. |
+| `set_resolver(resolver)` | admin | Rotates the resolver. |
+| `propose_admin(new_admin)` | admin | Step 1 of an admin hand-over: records a candidate. The current admin keeps all authority. |
+| `accept_admin()` | the proposed admin | Step 2: the candidate signs and becomes admin. |
+| `pending_admin()` | anyone | The candidate waiting to accept, if any. |
+| `set_fee(fee_bps, fee_recipient)` | admin | Platform fee on resolved pots, at most `MAX_FEE_BPS` (1,000 = 10%). `0` turns it off. |
 | `get_pot(session_id)` / `get_config()` | — | Reads state. |
 
 Pot status goes `Open → Staked → Resolved | Refunded`.

@@ -19,6 +19,7 @@ import { MetricsService, SettlementOutcome } from '../../metrics/metrics.service
 @Injectable()
 export class SettlementListener {
   private readonly logger = new Logger(SettlementListener.name);
+  public enabled = true;
 
   constructor(
     private readonly wagers: WagerService,
@@ -28,6 +29,7 @@ export class SettlementListener {
 
   @OnEvent('game.session.finished', { async: true, promisify: true })
   async onSessionFinished(event: SessionFinishedEvent): Promise<void> {
+    if (!this.enabled) return;
     if (event.mode !== GameMode.HEAD_TO_HEAD) return;
     const startedAt = process.hrtime.bigint();
     try {
@@ -37,11 +39,30 @@ export class SettlementListener {
         const outcome = settlementOutcome(wager.status);
         if (outcome) this.recordSettlement(outcome, startedAt);
         this.logger.log(`Session ${event.sessionId} settled: wager ${wager.id} is ${wager.status}`);
+        this.logger.log({
+          message: 'Session settlement completed',
+          event: 'settlement.completed',
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          wagerId: wager.id,
+          wagerStatus: wager.status,
+        });
       }
     } catch (err) {
       this.recordSettlement('failed', startedAt);
       // The wager stays as it was; the reconciler and operators take over.
-      this.logger.error(`Could not settle session ${event.sessionId}`, (err as Error).stack);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error({
+        message: 'Session settlement failed',
+        event: 'settlement.failed',
+        requestId: event.requestId,
+        sessionId: event.sessionId,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        },
+      });
     }
   }
 

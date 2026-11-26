@@ -17,6 +17,12 @@ It talks to `apps/game-server`.
 | Push notifications for challenge invites, stake requests and results | `src/lib/push.ts` (server: `POST /push-tokens`, Expo push service) |
 | Deep links: `lyricsflip://challenge/CODE`, `…/match/ID`, `…/results/ID` | `app.json` scheme, `src/lib/links.ts` |
 | Haptics on correct guesses | `src/lib/haptics.ts` |
+| Screen-reader announcements for guesses and score changes | `src/lib/a11y.ts` |
+| Notifications inbox and deep-link navigation | `app/(tabs)/notifications.tsx` |
+| All-time / today leaderboard with the current player highlighted | `app/(tabs)/leaderboard.tsx` |
+| Match history, linking to results | `app/match-history.tsx` |
+| Offline banner, read retries, blocked offline writes, reconnect resync | `src/lib/network.ts`, `src/hooks/useNetworkStatus.ts`, `src/components/OfflineBanner.tsx` |
+| Root error boundary and Sentry reporting (JS + native) | `src/components/ErrorBoundary.tsx`, `src/lib/errors.ts` |
 
 ## Wallet
 
@@ -58,6 +64,7 @@ npx expo start
 | `EXPO_PUBLIC_API_URL` | `http://localhost:3001` | The game server |
 | `EXPO_PUBLIC_STELLAR_NETWORK_PASSPHRASE` | testnet | Anything but a test network is refused |
 | `EXPO_PUBLIC_FRIENDBOT_URL` | `https://friendbot.stellar.org` | Funds the device wallet |
+| `EXPO_PUBLIC_SENTRY_DSN` | unset | Sentry DSN; crash reporting is a no-op without it |
 
 Push notifications need a physical device and an EAS project id (`extra.eas.projectId`, added by
 `eas init`). Without one, the app skips push registration and everything else works.
@@ -71,3 +78,13 @@ npm run bundle:check -w @lyricsflip-toolkit/mobile  # Metro + Hermes Android bun
 ```
 
 CI runs all three. The app has not been run on a physical device or emulator in CI.
+
+## End-to-end tests and builds
+
+`apps/mobile/.maestro/` holds Maestro flows for sign-in, solo play, the daily challenge and a staked
+head-to-head match. They are run manually from the `mobile` workflow (`workflow_dispatch`, with E2E
+enabled) against a built app and a game server using mock settlement; they are intentionally not part
+of every PR because they need a device/emulator and server credentials.
+
+`apps/mobile/eas.json` defines `development`, `preview` and `production` build profiles. The manual
+`release` workflow builds (and optionally submits) with EAS; see [`release.md`](release.md).

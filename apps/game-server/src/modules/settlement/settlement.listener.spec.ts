@@ -4,6 +4,7 @@ import { GameMode } from '../game/entities/game-session.entity';
 jest.mock('@lyricsflip-toolkit/server', () => ({
   WagerStatus: { WON: 'won', REFUNDED: 'refunded', FAILED: 'failed' },
 }));
+jest.mock('@lyricsflip-toolkit/server', () => ({}));
 
 describe('SettlementListener', () => {
   const wagers = { settleMatch: jest.fn() };

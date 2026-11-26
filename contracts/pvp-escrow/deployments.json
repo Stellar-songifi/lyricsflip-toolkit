@@ -1,0 +1,4 @@
+{
+  "$comment": "Live pvp-escrow instances, one entry per network. Written by .github/workflows/deploy-contract.yml through a reviewed PR; never edit by hand. wasmHash is the sha256 of the deployed Wasm, which equals `sha256sum` of a clean `cargo build --locked --target wasm32v1-none --release` of `commit`.",
+  "deployments": {}
+}

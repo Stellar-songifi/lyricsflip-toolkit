@@ -17,6 +17,16 @@ import { Sep10CleanupService } from './wallet/sep10-cleanup.service';
 import { Sep10Redeemed } from './wallet/sep10-redeemed.entity';
 import { WalletLink } from './wallet/wallet-link.entity';
 import { WalletLinkService } from './wallet/wallet-link.service';
+import {
+  WAGER_REPOSITORY,
+  WALLET_LINK_REPOSITORY,
+  MOCK_POT_REPOSITORY,
+  SEP10_REDEEMED_REPOSITORY,
+  TypeOrmWagerRepository,
+  TypeOrmWalletLinkRepository,
+  TypeOrmMockPotRepository,
+  TypeOrmSep10RedeemedRepository,
+} from './adapters/typeorm-repositories';
 
 /** Entities to add to the host app's TypeORM `entities`. */
 export const PVP_ENTITIES = [Wager, WalletLink, MockPot, Sep10Redeemed];
@@ -77,6 +87,25 @@ export class PvpSettlementModule {
       controllers,
       providers: [
         ...optionProviders,
+        // Core ports implemented over TypeORM repositories. The core services
+        // (WagerService, WagerReconcilerService, WalletLinkService, Sep10Service)
+        // depend only on these tokens, never on TypeORM directly.
+        {
+          provide: WAGER_REPOSITORY,
+          useClass: TypeOrmWagerRepository,
+        },
+        {
+          provide: WALLET_LINK_REPOSITORY,
+          useClass: TypeOrmWalletLinkRepository,
+        },
+        {
+          provide: MOCK_POT_REPOSITORY,
+          useClass: TypeOrmMockPotRepository,
+        },
+        {
+          provide: SEP10_REDEEMED_REPOSITORY,
+          useClass: TypeOrmSep10RedeemedRepository,
+        },
         MockEscrowGateway,
         {
           provide: ESCROW_GATEWAY,
@@ -91,7 +120,17 @@ export class PvpSettlementModule {
         WagerReconcilerService,
         PvpPlayerGuard,
       ],
-      exports: [WagerService, WalletLinkService, Sep10Service, ESCROW_GATEWAY, PVP_SETTLEMENT_OPTIONS],
+      exports: [
+        WagerService,
+        WalletLinkService,
+        Sep10Service,
+        ESCROW_GATEWAY,
+        PVP_SETTLEMENT_OPTIONS,
+        WAGER_REPOSITORY,
+        WALLET_LINK_REPOSITORY,
+        MOCK_POT_REPOSITORY,
+        SEP10_REDEEMED_REPOSITORY,
+      ],
     };
   }
 }
