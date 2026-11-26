@@ -1,13 +1,20 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Inject,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import {
+  CreateWagerInput,
+  MatchResult,
+  WagerCore,
+  WagerCoreDeps,
+} from '@lyricsflip-toolkit/core';
+import { ESCROW_GATEWAY, EscrowGateway, UnsignedStake } from '../escrow/escrow.gateway';
+import { PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { WalletLinkService } from '../wallet/wallet-link.service';
+import { PvpEvent } from './wager.events';
+import { Wager } from './wager.entity';
+import { TypeOrmWagerRepository } from './typeorm-wager.repository';
+
+export type { CreateWagerInput, MatchResult } from '@lyricsflip-toolkit/core';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { InvalidAmountError, assertPositiveStroops } from '@lyricsflip-toolkit/sdk';
 import {
@@ -91,11 +98,40 @@ export type MatchResult = { winnerId: string } | { draw: true };
  * Status changes use conditional updates (`WHERE status = ...`), so two
  * requests racing on the same wager can't both win a transition.
  */
+/**
+ * Thin NestJS adapter over the framework-agnostic {@link WagerCore}.
+ *
+ * All state-machine, settlement and reconciliation logic lives in
+ * `@lyricsflip-toolkit/core`; this class only wires the core to NestJS
+ * providers (the TypeORM repository, the escrow gateway, wallet links and
+ * the module options) and keeps the public method surface existing
+ * consumers already depend on.
+ */
 @Injectable()
 export class WagerService {
-  private readonly logger = new Logger(WagerService.name);
+  private readonly core: WagerCore;
 
   constructor(
+    @InjectRepository(Wager) wagers: Repository<Wager>,
+    @Inject(ESCROW_GATEWAY) escrow: EscrowGateway,
+    walletLinks: WalletLinkService,
+    @Inject(PVP_SETTLEMENT_OPTIONS) options: PvpSettlementOptions,
+  ) {
+    const deps: WagerCoreDeps = {
+      wagers: new TypeOrmWagerRepository(wagers),
+      escrow,
+      walletLinks,
+      options,
+      logger: new Logger(WagerService.name),
+      emit: (event: PvpEvent) => options.onEvent?.(event),
+    };
+    this.core = new WagerCore(deps);
+  }
+
+  // --- proposing and accepting --------------------------------------------
+
+  create(input: CreateWagerInput): Promise<Wager> {
+    return this.core.create(input);
     @InjectRepository(Wager) private readonly wagers: Repository<Wager>,
     @InjectRepository(WagerEvent) private readonly events: Repository<WagerEvent>,
     @Inject(ESCROW_GATEWAY) private readonly escrow: EscrowGateway,
@@ -138,64 +174,22 @@ export class WagerService {
     return wager;
   }
 
-  /**
-   * Player two accepts. This is the only way a pot gets opened, so no stake
-   * is ever requested from someone who hasn't agreed to it.
-   */
-  async accept(wagerId: string, playerId: string): Promise<Wager> {
-    let wager = await this.findById(wagerId);
-    if (playerId !== wager.playerBId) {
-      throw new ForbiddenException('Only the invited player can accept this wager');
-    }
-    if (wager.acceptedAt) {
-      return wager; // already accepted; accepting again is a no-op
-    }
-    if (wager.status !== WagerStatus.PENDING) {
-      throw new BadRequestException(`This wager can't be accepted (status: ${wager.status})`);
-    }
-    if (this.acceptWindowPassed(wager)) {
-      await this.transition(wager.id, WagerStatus.PENDING, { status: WagerStatus.CANCELLED });
-      throw new BadRequestException('This wager has expired');
-    }
-
-    const [addressA, addressB] = await Promise.all([
-      this.walletLinks.getAddress(wager.playerAId),
-      this.walletLinks.getAddress(wager.playerBId),
-    ]);
-    if (!addressA || !addressB) {
-      throw new BadRequestException('Both players need a linked, verified wallet');
-    }
-
-    // Record the acceptance and the payout addresses first, then open the pot.
-    const claimed = await this.wagers.update(
-      { id: wager.id, status: WagerStatus.PENDING, acceptedAt: IsNull() },
-      { acceptedAt: new Date(), playerAAddress: addressA, playerBAddress: addressB },
-    );
-    wager = await this.findById(wager.id);
-    if (!claimed.affected) {
-      return wager; // a concurrent accept got there first
-    }
-    return this.openPot(wager);
+  accept(wagerId: string, playerId: string): Promise<Wager> {
+    return this.core.accept(wagerId, playerId);
   }
 
-  /** Player two says no. Only before accepting; nothing has moved. */
-  async decline(wagerId: string, playerId: string): Promise<Wager> {
-    const wager = await this.findById(wagerId);
-    if (playerId !== wager.playerBId) {
-      throw new ForbiddenException('Only the invited player can decline this wager');
-    }
-    return this.cancelPending(wager);
+  decline(wagerId: string, playerId: string): Promise<Wager> {
+    return this.core.decline(wagerId, playerId);
   }
 
-  /** Either player withdraws a wager that hasn't been accepted yet. */
-  async cancel(wagerId: string, playerId: string): Promise<Wager> {
-    const wager = await this.findById(wagerId);
-    this.requirePlayer(wager, playerId);
-    return this.cancelPending(wager);
+  cancel(wagerId: string, playerId: string): Promise<Wager> {
+    return this.core.cancel(wagerId, playerId);
   }
 
   // --- staking -----------------------------------------------------------
 
+  buildStakeTransaction(wagerId: string, playerId: string): Promise<UnsignedStake | null> {
+    return this.core.buildStakeTransaction(wagerId, playerId);
   /**
    * The transaction `playerId` must sign to stake, or `null` when no
    * signature is needed (mock or custodial mode — call `submitStake`).
@@ -213,15 +207,12 @@ export class WagerService {
     }
   }
 
-  /**
-   * Submits a player's stake. The stake only counts once the pot confirms
-   * it, and the wager only becomes `staked` once the pot holds both.
-   */
-  async submitStake(
+  submitStake(
     wagerId: string,
     playerId: string,
     signedTransactionXdr: string | null,
   ): Promise<Wager> {
+    return this.core.submitStake(wagerId, playerId, signedTransactionXdr);
     const wager = await this.findById(wagerId);
     const side = this.requireStakeable(wager, playerId);
 
@@ -280,6 +271,8 @@ export class WagerService {
 
   // --- settlement (server only) -------------------------------------------
 
+  settle(wagerId: string, result: MatchResult): Promise<Wager> {
+    return this.core.settle(wagerId, result);
   /**
    * Settles a finished match. **Only the game server calls this**, once it
    * has decided the result; no HTTP route exposes it.
@@ -333,66 +326,24 @@ export class WagerService {
     throw new ConflictException('Could not claim this wager for settlement; try again');
   }
 
-  /** `settle`, looked up by the game's match id. */
-  async settleMatch(matchId: string, result: MatchResult): Promise<Wager | null> {
-    const wager = await this.findByMatchId(matchId);
-    return wager ? this.settle(wager.id, result) : null;
+  settleMatch(matchId: string, result: MatchResult): Promise<Wager | null> {
+    return this.core.settleMatch(matchId, result);
   }
 
-  /**
-   * Abandons a wager that can't be played: refunds whatever was staked, or
-   * cancels it if the pot was never opened. Server only.
-   */
-  async abort(wagerId: string, reason: string): Promise<Wager> {
-    const wager = await this.findById(wagerId);
-    if (wager.status === WagerStatus.PENDING && !wager.acceptedAt) {
-      return this.cancelPending(wager);
-    }
-    if (wager.status !== WagerStatus.AWAITING_STAKES && wager.status !== WagerStatus.STAKED) {
-      throw new BadRequestException(`This wager can't be aborted (status: ${wager.status})`);
-    }
-    this.logger.log(`Aborting wager ${wager.id}: ${reason}`);
-    const claimed = await this.transition(wager.id, wager.status, {
-      status: WagerStatus.SETTLING,
-      settlementKind: SettlementKind.REFUND,
-      winnerId: null,
-    });
-    if (!claimed) return this.findById(wager.id);
-    return this.submitSettlement(await this.findById(wager.id));
+  abort(wagerId: string, reason: string): Promise<Wager> {
+    return this.core.abort(wagerId, reason);
   }
 
   // --- reconciliation -----------------------------------------------------
 
-  /**
-   * Moves a wager whose last step had an unknown outcome to its true state,
-   * by reading the pot. Safe to call at any time and from any instance.
-   *
-   * A `settling` wager ends as `won` only if the pot was paid out, and as
-   * `refunded` only if the pot was actually refunded — never by guessing.
-   */
-  async reconcile(wagerId: string): Promise<Wager> {
-    const wager = await this.findById(wagerId);
-    switch (wager.status) {
-      case WagerStatus.PENDING:
-        if (wager.acceptedAt) return this.openPot(wager);
-        if (this.acceptWindowPassed(wager)) return this.cancelPending(wager);
-        return wager;
-      case WagerStatus.AWAITING_STAKES: {
-        const synced = await this.syncStakesFromPot(wager.id);
-        if (synced.status === WagerStatus.AWAITING_STAKES && this.stakeWindowPassed(synced)) {
-          return this.abort(synced.id, 'players did not both stake in time');
-        }
-        return synced;
-      }
-      case WagerStatus.SETTLING:
-        return this.reconcileSettlement(wager);
-      default:
-        return wager;
-    }
+  reconcile(wagerId: string): Promise<Wager> {
+    return this.core.reconcile(wagerId);
   }
 
   // --- reads --------------------------------------------------------------
 
+  findById(id: string): Promise<Wager> {
+    return this.core.findById(id);
   async findById(id: string): Promise<Wager> {
     const wager = await this.wagers.findOne({ where: { id } });
     if (!wager) throw new NotFoundException(`Wager ${id} not found`);
@@ -681,21 +632,20 @@ export class WagerService {
     return side;
   }
 
-  private addressOf(wager: Wager, side: 'A' | 'B'): string {
-    return (side === 'A' ? wager.playerAAddress : wager.playerBAddress) as string;
+  findByMatchId(matchId: string): Promise<Wager | null> {
+    return this.core.findByMatchId(matchId);
   }
 
-  private acceptWindowPassed(wager: Wager): boolean {
-    const windowMs = (this.options.acceptWindowSeconds ?? DEFAULTS.acceptWindowSeconds) * 1000;
-    return wager.createdAt.getTime() + windowMs < Date.now();
+  getForPlayer(wagerId: string, playerId: string): Promise<Wager> {
+    return this.core.getForPlayer(wagerId, playerId);
   }
 
-  private stakeWindowPassed(wager: Wager): boolean {
-    if (!wager.acceptedAt) return false;
-    const windowMs = (this.options.stakeWindowSeconds ?? DEFAULTS.stakeWindowSeconds) * 1000;
-    return wager.acceptedAt.getTime() + windowMs < Date.now();
+  listForPlayer(playerId: string, limit = 50): Promise<Wager[]> {
+    return this.core.listForPlayer(playerId, limit);
   }
 
+  findNeedingAttention(olderThan: Date, limit = 100): Promise<Wager[]> {
+    return this.core.findNeedingAttention(olderThan, limit);
   /**
    * Records an event for delivery. By default the event is written to the
    * `pvp_wager_events` outbox and delivered asynchronously by the

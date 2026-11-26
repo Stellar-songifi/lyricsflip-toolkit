@@ -14,6 +14,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { ServerOptions } from 'socket.io';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
 /**
  * Builds the OpenAPI document for the given Nest application.
@@ -148,6 +149,15 @@ async function bootstrap() {
     }),
   );
 
+  app.useGlobalFilters(new AllExceptionsFilter());
+
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('LyricsFlip API')
+    .setDescription('Solo play, rooms, head-to-head wagers and Stellar settlement')
+    .setVersion('0.1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
   const document = buildOpenApiDocument(app);
   SwaggerModule.setup('api/docs', app, document);
   const isProduction = process.env.NODE_ENV === 'production';
