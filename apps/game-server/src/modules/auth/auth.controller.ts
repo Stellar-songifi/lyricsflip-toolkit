@@ -17,6 +17,16 @@ class VerifyDto {
   signedTransactionXdr: string;
 }
 
+class RefreshDto {
+  @IsString()
+  refreshToken: string;
+}
+
+class LogoutDto {
+  @IsString()
+  refreshToken: string;
+}
+
 @ApiTags('auth')
 @UseGuards(ThrottlerGuard)
 @Controller('auth/stellar')
@@ -33,5 +43,15 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verify(@Body() dto: VerifyDto) {
     return this.authService.verify(dto.walletAddress, dto.signedTransactionXdr);
+  }
+
+  @Post('refresh')
+  refresh(@Body() dto: RefreshDto) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  @Post('logout')
+  logout(@Body() dto: LogoutDto) {
+    return this.authService.logout(dto.refreshToken);
   }
 }
