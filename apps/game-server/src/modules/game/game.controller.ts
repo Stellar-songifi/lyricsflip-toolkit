@@ -34,14 +34,22 @@ export class GameController {
     return this.gameService.joinSession(id, userId);
   }
 
+  /** Past matches for the signed-in player (issue #126). */
+  @Get('history')
+  @ApiOkResponse({ type: [GameSessionResponseDto] })
+  history(@CurrentUserId() userId: string) {
+    return this.gameService.historyForUser(userId);
+  }
+
   @Get('sessions/:id')
   @ApiOkResponse({ type: GameSessionResponseDto })
-  getSession(@Param('id', ParseUUIDPipe) id: string) {
-    return this.gameService.getSession(id);
+  async getSession(@Param('id', ParseUUIDPipe) id: string, @CurrentUserId() userId: string) {
+    return this.gameService.requireParticipant(id, userId);
   }
 
   @Get('sessions/:id/lyric')
-  getCurrentLyric(@Param('id', ParseUUIDPipe) id: string) {
+  async getCurrentLyric(@Param('id', ParseUUIDPipe) id: string, @CurrentUserId() userId: string) {
+    await this.gameService.requireParticipant(id, userId);
     return this.gameService.getCurrentLyric(id);
   }
 

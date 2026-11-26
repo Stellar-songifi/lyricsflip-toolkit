@@ -12,7 +12,7 @@ const SECRET_KEY = 'lyricsflip.testnet.wallet';
 
 /**
  * The player's testnet key, created on first launch and kept in the device
- * keychain. Testnet only: see docs/wallet-spike.md.
+ * keychain. Testnet only: see docs/wallet-spike.md and docs/passkey-wallet.md.
  */
 export async function loadOrCreateWallet(store: SecretStore): Promise<Keypair> {
   assertTestNetwork(NETWORK_PASSPHRASE);

@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Keypair } from '@stellar/stellar-sdk';
 import { API_TIMEOUT_MS, API_URL } from './config';
-import { createApi, type Api, type User } from './api';
+import { createApi, type Api, type ApiError, type User } from './api';
+import { captureException } from './errors';
 import { secureStore } from './secure-store';
 import { fundWithFriendbot, loadOrCreateWallet, signEnvelope } from './wallet';
 import { registerForPush } from './push';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 const TOKEN_KEY = 'lyricsflip.jwt';
 const PUSH_TOKEN_KEY = 'lyricsflip.push-token';
@@ -30,7 +32,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [wallet, setWallet] = useState<Keypair | null>(null);
   const [ready, setReady] = useState(false);
-  const api = useMemo(() => createApi(API_URL, () => token.current, fetch, API_TIMEOUT_MS), []);
+  const { online } = useNetworkStatus();
+  const onlineRef = useRef(online);
+  useEffect(() => {
+    onlineRef.current = online;
+  }, [online]);
+
+  const signOut = useCallback(async () => {
+    token.current = null;
+    await secureStore.set(TOKEN_KEY, '');
+    setUser(null);
+    // Gate in app/_layout.tsx sends a null user to /sign-in.
+  }, []);
+
+  const api = useMemo(
+    () =>
+      createApi(API_URL, () => token.current, fetch, API_TIMEOUT_MS, {
+        isOnline: () => onlineRef.current,
+        reportError: (error: ApiError) => captureException(error),
+        // A 401 means the JWT is gone: drop it so the player is signed out and
+        // routed back to sign-in instead of retrying a dead token on every call.
+        onUnauthorized: () => void signOut(),
+      }),
+    [signOut],
+  );
 
   const refreshUser = useCallback(async () => {
     setUser(await api.users.me());

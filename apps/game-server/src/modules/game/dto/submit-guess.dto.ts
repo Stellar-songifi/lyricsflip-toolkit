@@ -8,3 +8,17 @@ export class SubmitGuessDto {
   @MaxLength(200)
   guess: string;
 }
+
+export class SessionPayloadDto {
+  @IsUUID()
+  sessionId: string;
+}
+
+export class SubmitGuessPayloadDto {
+  @IsUUID()
+  sessionId: string;
+
+  @IsString()
+  @MaxLength(200)
+  guess: string;
+}
