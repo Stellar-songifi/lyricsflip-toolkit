@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -15,6 +16,7 @@ import { LyricsService } from '../lyrics/lyrics.service';
 import { UsersService } from '../users/users.service';
 import { GuessOutcome, scoreGuess } from './scoring';
 import type { AppConfig } from '../../config/configuration';
+import { RequestContext } from '../../config/request-context';
 
 export interface PublicLyric {
   id: string;
@@ -43,6 +45,7 @@ export interface GuessResult {
 
 /** Emitted once, by the server, when a session's last round is scored. */
 export interface SessionFinishedEvent {
+  requestId?: string;
   sessionId: string;
   mode: GameMode;
   playerIds: string[];
@@ -87,6 +90,7 @@ export class GameService {
     private readonly usersService: UsersService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AppConfig, true>,
+    @Optional() private readonly requestContext?: RequestContext,
   ) {}
 
   /**
@@ -509,6 +513,7 @@ export class GameService {
       // Reload after commit so settlement uses the canonical finished scores.
       const finishedSession = await this.getSession(sessionId);
       const finished: SessionFinishedEvent = {
+        requestId: this.requestContext?.requestId,
         sessionId,
         mode: finishedSession.mode,
         playerIds: [...finishedSession.playerIds],
@@ -529,6 +534,14 @@ export class GameService {
         scores: session.scores,
       } satisfies SessionFinishedEvent);
     }
+
+    this.eventEmitter.emit('guess.submitted', {
+      requestId: this.requestContext?.requestId,
+      sessionId,
+      userId,
+      outcome: finalOutcome,
+      points: finalPoints,
+    });
 
     return {
       outcome: GuessOutcome.CORRECT,
@@ -551,6 +564,7 @@ function toPublicLyric(
 ): PublicLyric {
   const startedAt = session.roundStartedAt ? new Date(session.roundStartedAt).getTime() : Date.now();
 function toPublicLyric(lyric: { id: string; snippet: string; genre: string; decade: number }): PublicLyric {
+  return { id: lyric.id, snippet: lyric.snippet, genre: lyric.genre, decade: lyric.decade };
   return {
     id: lyric.id,
     snippet: lyric.snippet,

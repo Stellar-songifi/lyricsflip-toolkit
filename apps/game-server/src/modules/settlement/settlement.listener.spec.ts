@@ -1,6 +1,8 @@
 import { SettlementListener } from './settlement.listener';
 import { GameMode } from '../game/entities/game-session.entity';
 
+jest.mock('@lyricsflip-toolkit/server', () => ({}));
+
 describe('SettlementListener', () => {
   const wagers = { settleMatch: jest.fn() };
   const games = { activate: jest.fn(), cancel: jest.fn() };

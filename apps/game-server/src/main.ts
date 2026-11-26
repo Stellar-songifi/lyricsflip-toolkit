@@ -1,4 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import { Logger as NestLogger, ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
@@ -74,6 +76,9 @@ class CorsIoAdapter extends IoAdapter {
 }
 
 async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
+  const logger = new NestLogger('Bootstrap');
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
@@ -203,6 +208,8 @@ async function bootstrap() {
   const port = configService.get('port', { infer: true });
   await app.listen(port);
 
+  logger.log(`LyricsFlip API listening on http://localhost:${port}`);
+  logger.log(`Swagger UI at http://localhost:${port}/api/docs`);
   console.log(`LyricsFlip API listening on http://localhost:${port}`);
 
   console.log(`Swagger UI at http://localhost:${port}/api/docs`);
