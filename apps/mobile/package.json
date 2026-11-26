@@ -18,7 +18,7 @@
     "@sentry/react-native": "^8.36.0",
     "@stellar/stellar-sdk": "^17.2.0",
     "expo": "57.0.26",
-    "expo-clipboard": "~57.0.2",
+    "expo-clipboard": "~58.0.4",
     "expo-constants": "~57.0.20",
     "expo-device": "~57.0.2",
     "expo-haptics": "~57.0.3",
