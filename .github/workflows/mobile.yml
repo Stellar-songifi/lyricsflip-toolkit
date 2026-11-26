@@ -41,7 +41,11 @@ jobs:
       - name: Build the SDK the app depends on
         run: npm run build -w @lyricsflip-toolkit/sdk
 
-      - name: Typecheck
+      # NOTE: `npm run lint -w @lyricsflip-toolkit/mobile` is actually `tsc --noEmit`,
+      # not ESLint. ESLint is not yet configured for the mobile workspace, so there is
+      # no separate ESLint step here. Once an ESLint config is added for apps/mobile,
+      # add a dedicated "Lint (ESLint)" step running ESLint for that workspace.
+      - name: Typecheck (tsc --noEmit)
         run: npm run lint -w @lyricsflip-toolkit/mobile
 
       - name: Tests
@@ -51,6 +55,7 @@ jobs:
         working-directory: apps/mobile
         env:
           CI: "1"
+        run: npx expo export --platform android --output-dir .expo-export
         run: npx expo export --platform android --output-dir .expo-export
 
       # E2E needs an installable binary and a running game server in mock mode,

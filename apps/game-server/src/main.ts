@@ -3,6 +3,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { INestApplication } from '@nestjs/common';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
@@ -15,6 +16,23 @@ import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 
 /**
+ * Builds the OpenAPI document for the given Nest application.
+ *
+ * This is exported so that both `bootstrap()` and the OpenAPI export script
+ * (which writes the committed `openapi.json` consumed by the mobile client's
+ * generated types) construct the document in exactly the same way. This
+ * guarantees the committed spec matches what the running server serves at
+ * `/api/docs-json`.
+ */
+export function buildOpenApiDocument(app: INestApplication) {
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('LyricsFlip API')
+    .setDescription('Solo play, rooms, head-to-head wagers and Stellar settlement')
+    .setVersion('0.1.0')
+    .addBearerAuth()
+    .build();
+
+  return SwaggerModule.createDocument(app, swaggerConfig);
  * Socket.IO adapter that applies the same CORS policy as the HTTP API.
  *
  * Native app clients send no `Origin` header, so those handshakes are allowed.
@@ -130,6 +148,8 @@ async function bootstrap() {
     }),
   );
 
+  const document = buildOpenApiDocument(app);
+  SwaggerModule.setup('api/docs', app, document);
   const isProduction = process.env.NODE_ENV === 'production';
   const swaggerEnabled =
     process.env.SWAGGER_ENABLED !== undefined
@@ -172,8 +192,10 @@ async function bootstrap() {
 
   const port = configService.get('port', { infer: true });
   await app.listen(port);
-   
+
   console.log(`LyricsFlip API listening on http://localhost:${port}`);
+
+  console.log(`Swagger UI at http://localhost:${port}/api/docs`);
    
   if (swaggerEnabled) {
     console.log(`Swagger UI at http://localhost:${port}/api/docs`);

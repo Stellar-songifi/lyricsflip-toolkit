@@ -31,13 +31,13 @@ concurrency:
 jobs:
   stellar-local:
     runs-on: ubuntu-latest
-    # A cold run is dominated by the Rust side: this workflow has no cargo
-    # cache, so the wasm32v1-none target and the whole soroban-sdk graph are
-    # compiled from scratch (minutes on their own). Then the quickstart image
-    # pull, `npm ci`, the wait-for-network loop below (up to 5 minutes before
-    # it gives up), and the integration suite. Cold runs land around 10-15
-    # minutes, so 30 leaves headroom for a slow runner or a flaky image pull
-    # without letting a wedged job sit for the 6-hour default.
+    # A cold run is dominated by the Rust side: the wasm32v1-none target and
+    # the whole soroban-sdk graph are compiled from scratch (minutes on their
+    # own), though the cargo cache below makes warm runs much cheaper. Then the
+    # quickstart image pull, `npm ci`, the wait-for-network loop below (up to 5
+    # minutes before it gives up), and the integration suite. Cold runs land
+    # around 10-15 minutes, so 30 leaves headroom for a slow runner or a flaky
+    # image pull without letting a wedged job sit for the 6-hour default.
     timeout-minutes: 30
     services:
       postgres:
@@ -74,6 +74,17 @@ jobs:
         uses: dtolnay/rust-toolchain@1.84.0
         with:
           targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Build pvp-escrow
         working-directory: contracts

@@ -1,25 +1,25 @@
-/** Typed client for apps/game-server. Every call but sign-in sends the JWT. */
+/**
+ * Typed client for apps/game-server. Every call but sign-in sends the JWT.
+ *
+ * Request/response types are generated from the server's OpenAPI document
+ * (see `api-types.ts`, produced by `npm run openapi:types`). Do not hand-edit
+ * those shapes here — change the server DTOs and regenerate instead.
+ */
 
-export interface User {
-  id: string;
-  username: string;
-  walletAddress: string | null;
-  xp: number;
-  level: string;
-  correctGuesses: number;
-  gamesPlayed: number;
-  nextLevel?: { level: string; minXp: number } | null;
-}
+import type { components } from './api-types';
 
-export interface PublicLyric {
-  id: string;
-  snippet: string;
-  genre: string;
-  decade: number;
-}
+type Schemas = components['schemas'];
 
-export type GuessOutcome = 'correct' | 'partial' | 'miss';
-
+export type User = Schemas['UserDto'];
+export type PublicLyric = Schemas['PublicLyricDto'];
+export type GuessOutcome = Schemas['GuessResultDto']['outcome'];
+export type GuessResult = Schemas['GuessResultDto'];
+export type GameSession = Schemas['GameSessionDto'];
+export type Challenge = Schemas['ChallengeDto'];
+export type WagerStatus = Schemas['WagerDto']['status'];
+export type Wager = Schemas['WagerDto'];
+export type DailyView = Schemas['DailyViewDto'];
+export type Notification = Schemas['NotificationDto'];
 export interface GuessResult {
   outcome: GuessOutcome;
   pointsAwarded: number;
@@ -193,11 +193,11 @@ export function createApi(
   return {
     auth: {
       challenge: (walletAddress: string) =>
-        request<{ transactionXdr: string; networkPassphrase: string }>('POST', '/auth/stellar/challenge', {
+        request<Schemas['AuthChallengeResponseDto']>('POST', '/auth/stellar/challenge', {
           walletAddress,
         }),
       verify: (walletAddress: string, signedTransactionXdr: string) =>
-        request<{ accessToken: string; user: User }>('POST', '/auth/stellar/verify', {
+        request<Schemas['AuthVerifyResponseDto']>('POST', '/auth/stellar/verify', {
           walletAddress,
           signedTransactionXdr,
         }),
@@ -219,7 +219,7 @@ export function createApi(
     daily: {
       today: () => request<DailyView>('GET', '/daily'),
       guess: (lyricId: string, guess: string) =>
-        request<{ outcome: GuessOutcome; points: number; title: string; artist: string }>('POST', '/daily/guess', {
+        request<Schemas['DailyGuessResultDto']>('POST', '/daily/guess', {
           lyricId,
           guess,
         }),
@@ -234,7 +234,7 @@ export function createApi(
         }),
       get: (code: string) => request<Challenge>('GET', `/challenges/${encodeURIComponent(code)}`),
       accept: (code: string) =>
-        request<{ gameSessionId: string; wagerId: string | null }>(
+        request<Schemas['AcceptChallengeResponseDto']>(
           'POST',
           `/challenges/${encodeURIComponent(code)}/accept`,
         ),
@@ -243,7 +243,7 @@ export function createApi(
       list: () => request<Wager[]>('GET', '/wagers'),
       get: (id: string) => request<Wager>('GET', `/wagers/${id}`),
       stakeTransaction: (id: string) =>
-        request<{ transaction: { transactionXdr: string; networkPassphrase: string } | null }>(
+        request<Schemas['StakeTransactionResponseDto']>(
           'POST',
           `/wagers/${id}/stake-transaction`,
         ),
@@ -253,13 +253,13 @@ export function createApi(
     },
     faucet: {
       info: () =>
-        request<{ enabled: boolean; asset: string | null; amount: string | null; rpcUrl: string | null; networkPassphrase: string | null }>(
+        request<Schemas['FaucetInfoDto']>(
           'GET',
           '/faucet',
           undefined,
           10_000,
         ),
-      claim: () => request<{ txHash: string; amount: string }>('POST', '/faucet', undefined, 10_000),
+      claim: () => request<Schemas['FaucetClaimResponseDto']>('POST', '/faucet', undefined, 10_000),
     },
     notifications: {
       /** Query params are ignored by today's server; #108 can page/filter them. */
@@ -274,6 +274,7 @@ export function createApi(
     },
     push: {
       register: (token: string, platform: 'ios' | 'android') =>
+        request<Schemas['PushTokenResponseDto']>('POST', '/push-tokens', { token, platform }),
         request<{ token: string }>('POST', '/push-tokens', { token, platform }),
       unregister: (token: string) =>
         request<void>('DELETE', `/push-tokens/${encodeURIComponent(token)}`),
