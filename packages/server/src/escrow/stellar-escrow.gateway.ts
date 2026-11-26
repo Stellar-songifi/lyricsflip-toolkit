@@ -1,9 +1,13 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, xdr } from '@stellar/stellar-sdk';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions, StellarSettlementOptions } from '../options';
 import { ResolverKeyProvider } from './resolver-secret';
+
+/** Ledgers (~5s each) a smart wallet has to sign and return a stake authorisation. */
+const STAKE_AUTH_VALID_LEDGERS = 60;
 import { toUserFacingError } from '../wager/wager.errors';
 import {
+  InvalidStakeAuthError,
   InvalidStakeEnvelopeError,
   PvpEscrowClient,
   PvpEscrowError,
@@ -18,6 +22,7 @@ import {
   PotState,
   SubmitOutcome,
   UnsignedStake,
+  UnsignedStakeAuth,
 } from './escrow.gateway';
 
 /**
@@ -146,6 +151,45 @@ export class StellarEscrowGateway implements EscrowGateway {
       });
     }
     return toOutcome(await this.client.rpc.submit(transaction));
+  }
+
+  /**
+   * Relayed stake for a smart wallet (#62): the server's resolver account is
+   * the transaction source and pays the fee; the player only signs the
+   * authorisation entry for `stake(potId, player)`.
+   */
+  async buildStakeAuth(potId: string, player: string): Promise<UnsignedStakeAuth> {
+    try {
+      const relayer = (await this.resolverKeys.resolve()).publicKey();
+      const request = await this.client.buildStakeAuth(potId, player, relayer, STAKE_AUTH_VALID_LEDGERS);
+      return {
+        authEntryXdr: request.authEntryXdr,
+        expirationLedger: request.expirationLedger,
+        networkPassphrase: request.networkPassphrase,
+      };
+    } catch (err) {
+      throw new BadRequestException(`Could not build the stake authorisation: ${(err as Error).message}`);
+    }
+  }
+
+  async submitStakeAuth(potId: string, player: string, signedAuthEntryXdr: string): Promise<SubmitOutcome> {
+    let entry: xdr.SorobanAuthorizationEntry;
+    try {
+      entry = xdr.SorobanAuthorizationEntry.fromXDR(signedAuthEntryXdr, 'base64');
+    } catch {
+      throw new BadRequestException('Not a valid authorisation entry');
+    }
+    try {
+      this.client.assertIsStakeAuth(entry, potId, player);
+    } catch (err) {
+      if (err instanceof InvalidStakeAuthError) throw new BadRequestException(err.message);
+      throw err;
+    }
+    return this.attempt('stake', async () => {
+      const relayer = await this.resolverKeys.resolve();
+      const transaction = await this.client.buildStakeWithAuth(potId, player, entry, relayer.publicKey());
+      return this.client.rpc.signAndSubmit(transaction, [relayer]);
+    });
   }
 
   resolve(potId: string, winner: string): Promise<SubmitOutcome> {
