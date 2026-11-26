@@ -120,7 +120,7 @@ jobs:
           mv deployments.tmp pvp-escrow/deployments.json
 
       - name: Open a PR with the registry update
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: deployments/${{ inputs.network }}-${{ github.run_id }}
           commit-message: "contracts: record pvp-escrow deployment on ${{ inputs.network }}"
