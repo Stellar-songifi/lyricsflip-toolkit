@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@lyricsflip-toolkit/server": "0.1.0",
-    "@nestjs/common": "^11.0.1",
+    "@nestjs/common": "^12.6.0",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/typeorm": "^11.0.3",
