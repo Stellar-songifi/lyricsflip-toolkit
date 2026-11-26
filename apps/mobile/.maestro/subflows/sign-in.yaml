@@ -1,0 +1,7 @@
+appId: com.stellarsongifi.lyricsflip
+---
+- launchApp
+- assertVisible: "Sign in with your wallet"
+- tapOn: "Sign in with your wallet"
+- assertVisible: "Hi,"
+- assertVisible: "Solo"

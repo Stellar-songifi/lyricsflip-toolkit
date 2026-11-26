@@ -38,6 +38,7 @@ export default function Rooms() {
         style={styles.input}
         placeholder="Room id"
         placeholderTextColor={colors.muted}
+        accessibilityLabel="Room id"
         value={roomId}
         onChangeText={setRoomId}
         autoCapitalize="none"

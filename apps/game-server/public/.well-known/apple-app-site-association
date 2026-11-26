@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.stellarsongifi.lyricsflip",
+        "paths": [
+          "/challenge/*",
+          "/match/*",
+          "/results/*"
+        ]
+      }
+    ]
+  }
+}

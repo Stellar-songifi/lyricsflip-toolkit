@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@lyricsflip-toolkit/sdk": "0.1.0",
+    "@react-native-community/netinfo": "^12.0.1",
+    "@sentry/react-native": "^8.36.0",
     "@stellar/stellar-sdk": "^17.2.0",
     "expo": "57.0.26",
     "expo-clipboard": "~57.0.2",
@@ -46,7 +48,7 @@
   "jest": {
     "preset": "jest-expo",
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|react-native-svg|@stellar|@lyricsflip-toolkit|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|react-native-svg|@stellar|@lyricsflip-toolkit|@sentry|uint8array-extras|@exodus|@noble|axios|eventsource|smol-toml)"
     ],
     "moduleNameMapper": {
       "^@lyricsflip-toolkit/sdk$": "<rootDir>/../../packages/sdk/src"

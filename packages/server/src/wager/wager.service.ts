@@ -15,6 +15,56 @@ import { Wager } from './wager.entity';
 import { TypeOrmWagerRepository } from './typeorm-wager.repository';
 
 export type { CreateWagerInput, MatchResult } from '@lyricsflip-toolkit/core';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
+import { InvalidAmountError, assertPositiveStroops } from '@lyricsflip-toolkit/sdk';
+import {
+  ESCROW_GATEWAY,
+  EscrowGateway,
+  SubmitOutcome,
+  UnsignedStake,
+  UnsignedStakeAuth,
+} from '../escrow/escrow.gateway';
+import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { WalletLinkService } from '../wallet/wallet-link.service';
+import { PvpEvent } from './wager.events';
+import { WagerEvent } from './wager-event.entity';
+import { SettlementKind, Wager, WagerStatus } from './wager.entity';
+
+/**
+ * Stable, user-facing error codes. Each code has a fixed message that is
+ * safe to return to players: it never contains raw XDR, base64 blobs or
+ * RPC URLs. Full details are logged server-side against the wager id.
+ */
+export const WAGER_ERROR_CODES = {
+  STAKE_REJECTED: 'The stake was rejected by the escrow. Nothing was taken from your wallet.',
+  INSUFFICIENT_BALANCE: 'Your wallet does not have enough funds to cover this stake.',
+  POT_EXPIRED: 'The pot expired before the stake could be placed.',
+  INVALID_ENVELOPE: 'The signed transaction could not be read. Please sign it again.',
+  STAKE_BUILD_FAILED: 'The stake transaction could not be prepared. Please try again.',
+} as const;
+
+export type WagerErrorCode = keyof typeof WAGER_ERROR_CODES;
+
+/** A `BadRequestException` carrying a stable code and a safe message. */
+export class WagerError extends BadRequestException {
+  constructor(readonly code: WagerErrorCode) {
+    super({ code, message: WAGER_ERROR_CODES[code] });
+  }
+}
+
+/**
+ * Maps a raw downstream error string to a stable code. The raw string is
+ * only ever used for classification and logging, never returned.
+ */
+export function classifyWagerError(raw: string | undefined): WagerErrorCode {
+  const text = (raw ?? '').toLowerCase();
+  if (/insufficient|underfunded|balance/.test(text)) return 'INSUFFICIENT_BALANCE';
+  if (/expired|deadline|timeout|timed out|potnotstaked|pot_not_staked/.test(text)) return 'POT_EXPIRED';
+  if (/xdr|base64|envelope|decode|malformed|invalid.*(tx|transaction)/.test(text)) {
+    return 'INVALID_ENVELOPE';
+  }
+  return 'STAKE_REJECTED';
+}
 
 export interface CreateWagerInput {
   /** The game's id for the match. One wager per match. */
@@ -82,6 +132,46 @@ export class WagerService {
 
   create(input: CreateWagerInput): Promise<Wager> {
     return this.core.create(input);
+    @InjectRepository(Wager) private readonly wagers: Repository<Wager>,
+    @InjectRepository(WagerEvent) private readonly events: Repository<WagerEvent>,
+    @Inject(ESCROW_GATEWAY) private readonly escrow: EscrowGateway,
+    private readonly walletLinks: WalletLinkService,
+    @Inject(PVP_SETTLEMENT_OPTIONS) private readonly options: PvpSettlementOptions,
+    private readonly dataSource: DataSource,
+  ) {}
+
+  // --- proposing and accepting --------------------------------------------
+
+  /** Proposes a wager. Only records it: no pot, no stake requests. */
+  async create(input: CreateWagerInput): Promise<Wager> {
+    if (input.playerAId === input.playerBId) {
+      throw new BadRequestException("A player can't wager against themselves");
+    }
+    let stakeAmount: string;
+    try {
+      stakeAmount = assertPositiveStroops(input.stakeAmount, 'stakeAmount');
+    } catch (err) {
+      if (err instanceof InvalidAmountError) throw new BadRequestException(err.message);
+      throw err;
+    }
+    if (!(await this.walletLinks.getAddress(input.playerAId))) {
+      throw new BadRequestException('Link and verify a wallet before proposing a wager');
+    }
+    if (await this.wagers.exist({ where: { matchId: input.matchId } })) {
+      throw new ConflictException(`Match ${input.matchId} already has a wager`);
+    }
+
+    const wager = await this.wagers.save(
+      this.wagers.create({
+        matchId: input.matchId,
+        playerAId: input.playerAId,
+        playerBId: input.playerBId,
+        stakeAmount,
+        status: WagerStatus.PENDING,
+      }),
+    );
+    await this.emit({ type: 'wager.created', wager });
+    return wager;
   }
 
   accept(wagerId: string, playerId: string): Promise<Wager> {
@@ -100,6 +190,21 @@ export class WagerService {
 
   buildStakeTransaction(wagerId: string, playerId: string): Promise<UnsignedStake | null> {
     return this.core.buildStakeTransaction(wagerId, playerId);
+  /**
+   * The transaction `playerId` must sign to stake, or `null` when no
+   * signature is needed (mock or custodial mode — call `submitStake`).
+   */
+  async buildStakeTransaction(wagerId: string, playerId: string): Promise<UnsignedStake | null> {
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+    try {
+      return await this.escrow.buildStake(wager.id, this.addressOf(wager, side), playerId);
+    } catch (err) {
+      this.logger.error(
+        `Wager ${wager.id}: buildStake failed for player ${playerId}: ${this.describeError(err)}`,
+      );
+      throw new WagerError('STAKE_BUILD_FAILED');
+    }
   }
 
   submitStake(
@@ -108,12 +213,117 @@ export class WagerService {
     signedTransactionXdr: string | null,
   ): Promise<Wager> {
     return this.core.submitStake(wagerId, playerId, signedTransactionXdr);
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+
+    const outcome = await this.escrow.submitStake(
+      wager.id,
+      this.addressOf(wager, side),
+      playerId,
+      signedTransactionXdr,
+    );
+    return this.recordStakeOutcome(wager, side, outcome);
+  }
+
+  /**
+   * Builds the authorisation entry a smart wallet signs to stake (#62); the
+   * server relays it, so the wallet needs no XLM and signs no transaction.
+   */
+  async buildStakeAuth(wagerId: string, playerId: string): Promise<UnsignedStakeAuth> {
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+    if (!this.escrow.buildStakeAuth) {
+      throw new BadRequestException('This settlement mode does not relay stake authorisations');
+    }
+    return this.escrow.buildStakeAuth(wager.id, this.addressOf(wager, side));
+  }
+
+  /** Submits a player's signed stake authorisation entry (#62). */
+  async submitStakeAuth(wagerId: string, playerId: string, signedAuthEntryXdr: string): Promise<Wager> {
+    const wager = await this.findById(wagerId);
+    const side = this.requireStakeable(wager, playerId);
+    if (!this.escrow.submitStakeAuth) {
+      throw new BadRequestException('This settlement mode does not relay stake authorisations');
+    }
+    const outcome = await this.escrow.submitStakeAuth(wager.id, this.addressOf(wager, side), signedAuthEntryXdr);
+    return this.recordStakeOutcome(wager, side, outcome);
+  }
+
+  private async recordStakeOutcome(wager: Wager, side: 'A' | 'B', outcome: SubmitOutcome): Promise<Wager> {
+    if (outcome.txHash) {
+      await this.wagers.update(
+        { id: wager.id },
+        side === 'A' ? { playerAStakeTxHash: outcome.txHash } : { playerBStakeTxHash: outcome.txHash },
+      );
+    }
+    if (outcome.status === 'failed') {
+      const code = classifyWagerError(outcome.error);
+      this.logger.error(
+        `Wager ${wager.id}: stake submission failed for player ${playerId} (code ${code}): ${
+          outcome.error ?? 'unknown error'
+        }`,
+      );
+      throw new WagerError(code);
+    }
+    // Confirmed or still pending: either way, the pot decides.
+    return this.syncStakesFromPot(wager.id);
   }
 
   // --- settlement (server only) -------------------------------------------
 
   settle(wagerId: string, result: MatchResult): Promise<Wager> {
     return this.core.settle(wagerId, result);
+  /**
+   * Settles a finished match. **Only the game server calls this**, once it
+   * has decided the result; no HTTP route exposes it.
+   *
+   * The intent (payout to whom, or refund) is committed before anything is
+   * submitted, so an interrupted payout is always recognisable as a payout.
+   * Calling again with the same result is a no-op.
+   */
+  async settle(wagerId: string, result: MatchResult): Promise<Wager> {
+    const wager = await this.findById(wagerId);
+    const kind = 'draw' in result ? SettlementKind.REFUND : SettlementKind.PAYOUT;
+    const winnerId = 'winnerId' in result ? result.winnerId : null;
+    if (winnerId !== null && winnerId !== wager.playerAId && winnerId !== wager.playerBId) {
+      throw new BadRequestException('The winner must be one of the two players');
+    }
+
+    if (wager.settlementKind) {
+      if (wager.settlementKind === kind && wager.winnerId === winnerId) {
+        return wager; // already settling or settled this way
+      }
+      throw new ConflictException('This wager is already being settled differently');
+    }
+    if (wager.status !== WagerStatus.STAKED) {
+      throw new BadRequestException(`Only a staked wager can be settled (status: ${wager.status})`);
+    }
+
+    // Bounded retry: a lost conditional update means another request moved the
+    // wager. Re-read and re-check a few times, then give up rather than recurse.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const claimed = await this.transition(wager.id, WagerStatus.STAKED, {
+        status: WagerStatus.SETTLING,
+        settlementKind: kind,
+        winnerId,
+      });
+      if (claimed) {
+        return this.submitSettlement(await this.findById(wager.id));
+      }
+      const current = await this.findById(wager.id);
+      if (current.settlementKind) {
+        if (current.settlementKind === kind && current.winnerId === winnerId) {
+          return current; // already settling or settled this way
+        }
+        throw new ConflictException('This wager is already being settled differently');
+      }
+      if (current.status !== WagerStatus.STAKED) {
+        throw new BadRequestException(
+          `Only a staked wager can be settled (status: ${current.status})`,
+        );
+      }
+    }
+    throw new ConflictException('Could not claim this wager for settlement; try again');
   }
 
   settleMatch(matchId: string, result: MatchResult): Promise<Wager | null> {
@@ -134,6 +344,292 @@ export class WagerService {
 
   findById(id: string): Promise<Wager> {
     return this.core.findById(id);
+  async findById(id: string): Promise<Wager> {
+    const wager = await this.wagers.findOne({ where: { id } });
+    if (!wager) throw new NotFoundException(`Wager ${id} not found`);
+    return wager;
+  }
+
+  async findByMatchId(matchId: string): Promise<Wager | null> {
+    return this.wagers.findOne({ where: { matchId } });
+  }
+
+  /** A wager, for one of its own players only. */
+  async getForPlayer(wagerId: string, playerId: string): Promise<Wager> {
+    const wager = await this.findById(wagerId);
+    this.requirePlayer(wager, playerId);
+    return wager;
+  }
+
+  async listForPlayer(playerId: string, limit = 50): Promise<Wager[]> {
+    return this.wagers.find({
+      where: [{ playerAId: playerId }, { playerBId: playerId }],
+      order: { createdAt: 'DESC' },
+      take: Math.min(limit, 200),
+    });
+  }
+
+  /**
+   * Wagers the background sweep should look at: those whose `nextAttemptAt`
+   * has passed (or was never set), oldest due first.
+   */
+  async findNeedingAttention(now: Date, limit = 100): Promise<Wager[]> {
+    return this.wagers
+      .createQueryBuilder('w')
+      .where('w.status IN (:...statuses)', {
+        statuses: [WagerStatus.PENDING, WagerStatus.AWAITING_STAKES, WagerStatus.SETTLING],
+      })
+      .andWhere('(w.nextAttemptAt IS NULL OR w.nextAttemptAt <= :now)', { now })
+      .orderBy('w.nextAttemptAt', 'ASC', 'NULLS FIRST')
+      .addOrderBy('w.updatedAt', 'ASC')
+      .take(limit)
+      .getMany();
+  }
+
+  /** How many wagers are currently waiting for the reconciler. */
+  async countNeedingAttention(now: Date): Promise<number> {
+    return this.wagers
+      .createQueryBuilder('w')
+      .where('w.status IN (:...statuses)', {
+        statuses: [WagerStatus.PENDING, WagerStatus.AWAITING_STAKES, WagerStatus.SETTLING],
+      })
+      .andWhere('(w.nextAttemptAt IS NULL OR w.nextAttemptAt <= :now)', { now })
+      .getCount();
+  }
+
+  // --- internals ------------------------------------------------------------
+
+  private async openPot(wager: Wager): Promise<Wager> {
+    const outcome = await this.escrow.openPot({
+      potId: wager.id,
+      playerA: wager.playerAAddress as string,
+      playerB: wager.playerBAddress as string,
+      stakeAmount: wager.stakeAmount,
+      timeoutLedgers: this.options.potTimeoutLedgers ?? DEFAULTS.potTimeoutLedgers,
+    });
+
+    if (outcome.status === 'failed') {
+      await this.transition(wager.id, WagerStatus.PENDING, {
+        status: WagerStatus.FAILED,
+        failureReason: `open_pot failed: ${outcome.error ?? 'unknown error'}`,
+      });
+      return this.findById(wager.id);
+    }
+
+    // Pending or confirmed: only move on once the pot exists.
+    const pot = outcome.status === 'confirmed' ? null : await this.escrow.getPot(wager.id);
+    if (outcome.status === 'confirmed' || pot) {
+      await this.transition(wager.id, WagerStatus.PENDING, {
+        status: WagerStatus.AWAITING_STAKES,
+        potDeadlineLedger: outcome.deadlineLedger ?? pot?.deadlineLedger ?? null,
+      });
+      const opened = await this.findById(wager.id);
+      await this.emit({ type: 'wager.accepted', wager: opened });
+      return opened;
+    }
+    return this.findById(wager.id);
+  }
+
+  /** Copies confirmed stakes from the pot, and marks `staked` once both are in. */
+  private async syncStakesFromPot(wagerId: string): Promise<Wager> {
+    const wager = await this.findById(wagerId);
+    if (wager.status !== WagerStatus.AWAITING_STAKES) return wager;
+
+    const pot = await this.escrow.getPot(wager.id);
+    if (!pot) return wager;
+    const now = new Date();
+    if (pot.playerAStaked && !wager.playerAStakedAt) {
+      await this.wagers.update({ id: wager.id, playerAStakedAt: IsNull() }, { playerAStakedAt: now });
+    }
+    if (pot.playerBStaked && !wager.playerBStakedAt) {
+      await this.wagers.update({ id: wager.id, playerBStakedAt: IsNull() }, { playerBStakedAt: now });
+    }
+
+    const staked = await this.wagers.update(
+      {
+        id: wager.id,
+        status: WagerStatus.AWAITING_STAKES,
+        playerAStakedAt: Not(IsNull()),
+        playerBStakedAt: Not(IsNull()),
+      },
+      { status: WagerStatus.STAKED },
+    );
+    const updated = await this.findById(wager.id);
+    if (staked.affected) {
+      await this.emit({ type: 'wager.staked', wager: updated });
+    }
+    return updated;
+  }
+
+  /** Submits the recorded settlement intent and records what happened. */
+  private async submitSettlement(wager: Wager): Promise<Wager> {
+    let outcome: SubmitOutcome;
+    if (wager.settlementKind === SettlementKind.PAYOUT) {
+      const winnerAddress =
+        wager.winnerId === wager.playerAId ? wager.playerAAddress : wager.playerBAddress;
+      outcome = await this.escrow.resolve(wager.id, winnerAddress as string);
+    } else {
+      outcome = await this.escrow.refund(wager.id);
+    }
+
+    if (outcome.txHash) {
+      await this.wagers.update(
+        { id: wager.id, status: WagerStatus.SETTLING },
+        { settlementTxHash: outcome.txHash, settlementLedger: outcome.ledger ?? null },
+      );
+    }
+    if (outcome.status === 'pending') {
+      this.logger.warn(`Wager ${wager.id} settlement submitted but unconfirmed; will reconcile`);
+      return this.findById(wager.id);
+    }
+    if (outcome.status === 'failed') {
+      this.logger.warn(`Wager ${wager.id} settlement failed (${outcome.error}); checking the pot`);
+      // The pot says what really happened; a retry is left to the next sweep.
+      return this.reconcileSettlement(await this.findById(wager.id));
+    }
+    // Confirmed: trust it for the immediate response. The wager stays
+    // `settling` and the background sweep confirms it against the pot, so a
+    // lagging RPC node can't trigger a resubmission here.
+    return this.findById(wager.id);
+  }
+
+  /**
+   * Reconciles a `settling` wager against the pot. Called from the background
+   * sweep only; never resubmits recursively within the same call.
+   */
+  private async reconcileSettlement(wager: Wager): Promise<Wager> {
+    const pot = await this.escrow.getPot(wager.id);
+    const payout = wager.settlementKind === SettlementKind.PAYOUT;
+
+    if (pot?.status === 'resolved') {
+      if (!payout) {
+        return this.fail(wager, 'The pot was paid out, but a refund was intended');
+      }
+      return this.finish(wager, WagerStatus.WON);
+    }
+    if (pot?.status === 'refunded') {
+      if (payout) {
+        // A refund really happened (the players reclaimed their stakes after
+        // the pot timed out), so `refunded` is the true state.
+        this.logger.warn(`Wager ${wager.id}: payout intended but the pot was refunded on-chain`);
+      }
+      return this.finish(wager, WagerStatus.REFUNDED);
+    }
+    if (!pot) {
+      return this.fail(wager, 'The escrow has no pot for this wager');
+    }
+    if (payout && !(pot.playerAStaked && pot.playerBStaked)) {
+      return this.fail(
+        wager,
+        'A player reclaimed their stake after the pot timed out; the payout can no longer happen',
+      );
+    }
+
+    // The intended call hasn't landed. Before resubmitting, check whether the
+    // previous submission actually made it on-chain: if it did, the pot is
+    // simply lagging, so wait for it instead of paying fees for a duplicate.
+    if (wager.settlementTxHash) {
+      const lookup = await this.escrow.lookup(wager.settlementTxHash);
+      if (lookup.status === 'succeeded') {
+        this.logger.log(
+          `Wager ${wager.id}: settlement ${wager.settlementTxHash} already landed; waiting for the pot`,
+        );
+        return this.recordAttempt(wager);
+      }
+    }
+
+    // The intended call hasn't landed. Retry it: the contract refuses a
+    // second payout, so a retry can never pay twice.
+    const attempts = wager.reconcileAttempts + 1;
+    const max = this.options.reconcile?.maxAttempts ?? DEFAULTS.reconcileMaxAttempts;
+    if (attempts >= max) {
+      return this.fail(wager, `Settlement did not land after ${attempts} attempts`);
+    }
+    const recorded = await this.recordAttempt(wager, attempts);
+    if (recorded.status !== WagerStatus.SETTLING) return recorded;
+    return this.submitSettlement(recorded);
+  }
+
+  /**
+   * Records one reconcile attempt and schedules the next one with exponential
+   * backoff and jitter. `reconcileAttempts` grows at most once per call.
+   */
+  private async recordAttempt(wager: Wager, attempts = wager.reconcileAttempts + 1): Promise<Wager> {
+    const nextAttemptAt = this.nextAttemptAt(attempts);
+    await this.wagers.update(
+      { id: wager.id, status: WagerStatus.SETTLING },
+      { reconcileAttempts: attempts, nextAttemptAt },
+    );
+    return this.findById(wager.id);
+  }
+
+  /** Exponential backoff with jitter, based on the attempt count. */
+  private nextAttemptAt(attempts: number): Date {
+    const baseMs = this.options.reconcile?.baseDelayMs ?? DEFAULTS.reconcileBaseDelayMs;
+    const maxMs = this.options.reconcile?.maxDelayMs ?? DEFAULTS.reconcileMaxDelayMs;
+    const exponential = Math.min(maxMs, baseMs * 2 ** Math.max(0, attempts - 1));
+    const jitter = Math.random() * exponential * 0.5;
+    return new Date(Date.now() + exponential + jitter);
+  }
+
+  private async finish(wager: Wager, status: WagerStatus.WON | WagerStatus.REFUNDED): Promise<Wager> {
+    const moved = await this.transition(wager.id, WagerStatus.SETTLING, { status });
+    const finished = await this.findById(wager.id);
+    if (moved) {
+      await this.emit({
+        type: status === WagerStatus.WON ? 'wager.won' : 'wager.refunded',
+        wager: finished,
+      });
+    }
+    return finished;
+  }
+
+  private async fail(wager: Wager, reason: string): Promise<Wager> {
+    this.logger.error(`Wager ${wager.id} needs an operator: ${reason}`);
+    const moved = await this.transition(wager.id, wager.status, {
+      status: WagerStatus.FAILED,
+      failureReason: reason,
+    });
+    const failed = await this.findById(wager.id);
+    if (moved) await this.emit({ type: 'wager.failed', wager: failed });
+    return failed;
+  }
+
+  private async cancelPending(wager: Wager): Promise<Wager> {
+    if (wager.status === WagerStatus.CANCELLED) return wager;
+    if (wager.status !== WagerStatus.PENDING || wager.acceptedAt) {
+      throw new BadRequestException(`This wager can no longer be cancelled (status: ${wager.status})`);
+    }
+    const moved = await this.wagers.update(
+      { id: wager.id, status: WagerStatus.PENDING, acceptedAt: IsNull() },
+      { status: WagerStatus.CANCELLED },
+    );
+    const cancelled = await this.findById(wager.id);
+    if (moved.affected) await this.emit({ type: 'wager.cancelled', wager: cancelled });
+    return cancelled;
+  }
+
+  /** Conditional status change; returns false if the wager had moved on. */
+  private async transition(id: string, from: WagerStatus, changes: Partial<Wager>): Promise<boolean> {
+    const result = await this.wagers.update({ id, status: from }, changes);
+    return Boolean(result.affected);
+  }
+
+  private requirePlayer(wager: Wager, playerId: string): 'A' | 'B' {
+    if (playerId === wager.playerAId) return 'A';
+    if (playerId === wager.playerBId) return 'B';
+    throw new ForbiddenException('You are not a player in this wager');
+  }
+
+  private requireStakeable(wager: Wager, playerId: string): 'A' | 'B' {
+    const side = this.requirePlayer(wager, playerId);
+    if (wager.status !== WagerStatus.AWAITING_STAKES) {
+      throw new BadRequestException(`This wager is not taking stakes (status: ${wager.status})`);
+    }
+    if (side === 'A' ? wager.playerAStakedAt : wager.playerBStakedAt) {
+      throw new BadRequestException('You have already staked');
+    }
+    return side;
   }
 
   findByMatchId(matchId: string): Promise<Wager | null> {
@@ -150,5 +646,36 @@ export class WagerService {
 
   findNeedingAttention(olderThan: Date, limit = 100): Promise<Wager[]> {
     return this.core.findNeedingAttention(olderThan, limit);
+  /**
+   * Records an event for delivery. By default the event is written to the
+   * `pvp_wager_events` outbox and delivered asynchronously by the
+   * dispatcher, so a crash between the status commit and the handler
+   * finishing cannot lose it. Delivery is **at-least-once**: handlers must
+   * be idempotent. Set `synchronousEmit` for tests that want the old
+   * in-process behaviour.
+   */
+  private async emit(event: PvpEvent): Promise<void> {
+    if (this.options.synchronousEmit) {
+      try {
+        await this.options.onEvent?.(event);
+      } catch (err) {
+        this.logger.error(`onEvent handler threw for ${event.type}`, err as Error);
+      }
+      return;
+    }
+    try {
+      await this.events.insert({
+        wagerId: event.wager.id,
+        type: event.type,
+        payload: event as unknown as Record<string, unknown>,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to record ${event.type} for wager ${event.wager.id}`, err as Error);
+    }
+  }
+
+  private describeError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
   }
 }
