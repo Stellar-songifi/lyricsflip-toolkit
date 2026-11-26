@@ -1,0 +1,139 @@
+# Deploys pvp-escrow from a reviewed commit and opens a PR recording the
+# deployment in contracts/pvp-escrow/deployments.json (#79).
+#
+# - Builds the exact Cargo.lock-pinned Wasm and records its sha256.
+# - The deployer key is both the transaction source and the initial admin
+#   (the constructor requires the admin's signature). Handing admin to the
+#   production multisig is a separate, manually reviewed action; this
+#   workflow never calls set_admin / propose_admin / accept_admin.
+# - Never merges anything: the registry update arrives as a PR to review.
+name: deploy-contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Target network
+        type: choice
+        options: [testnet, futurenet, mainnet]
+        default: testnet
+      resolver:
+        description: Resolver public key (G...) the game server signs with
+        required: true
+      token:
+        description: Stake token contract id (C...)
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: deploy-contract-${{ inputs.network }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Protect the environments in repo settings (required reviewers for
+    # mainnet); each one holds its own DEPLOYER_SECRET_KEY.
+    environment: contracts-${{ inputs.network }}
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        env:
+          RESOLVER: ${{ inputs.resolver }}
+          TOKEN: ${{ inputs.token }}
+        run: |
+          [[ "$RESOLVER" =~ ^G[A-Z2-7]{55}$ ]] || { echo "::error::resolver is not a G... address"; exit 1; }
+          [[ "$TOKEN" =~ ^C[A-Z2-7]{55}$ ]] || { echo "::error::token is not a C... contract id"; exit 1; }
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Install stellar-cli
+        run: cargo install --locked stellar-cli --version 28.0.0
+
+      - name: Build the Cargo.lock-pinned Wasm
+        run: |
+          cargo build --locked --target wasm32v1-none --release -p pvp-escrow
+          WASM=target/wasm32v1-none/release/pvp_escrow.wasm
+          echo "WASM=$WASM" >> "$GITHUB_ENV"
+          echo "WASM_HASH=$(sha256sum "$WASM" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Configure network
+        env:
+          NETWORK: ${{ inputs.network }}
+          MAINNET_RPC_URL: ${{ vars.MAINNET_RPC_URL }}
+        run: |
+          if [ "$NETWORK" = "mainnet" ]; then
+            : "${MAINNET_RPC_URL:?set the MAINNET_RPC_URL repository variable}"
+            stellar network add mainnet --rpc-url "$MAINNET_RPC_URL" \
+              --network-passphrase "Public Global Stellar Network ; September 2015"
+          fi
+
+      - name: Deploy
+        env:
+          NETWORK: ${{ inputs.network }}
+          RESOLVER: ${{ inputs.resolver }}
+          TOKEN: ${{ inputs.token }}
+          STELLAR_ACCOUNT: ${{ secrets.DEPLOYER_SECRET_KEY }}
+        run: |
+          : "${STELLAR_ACCOUNT:?set DEPLOYER_SECRET_KEY in the contracts-${NETWORK} environment}"
+          ADMIN=$(stellar keys address "$STELLAR_ACCOUNT")
+          CONTRACT_ID=$(stellar contract deploy \
+            --wasm "$WASM" \
+            --source-account "$STELLAR_ACCOUNT" \
+            --network "$NETWORK" \
+            -- \
+            --admin "$ADMIN" \
+            --resolver "$RESOLVER" \
+            --token "$TOKEN")
+          echo "ADMIN=$ADMIN" >> "$GITHUB_ENV"
+          echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
+          {
+            echo "### Deployed pvp-escrow to ${NETWORK}"
+            echo "- contract: \`${CONTRACT_ID}\`"
+            echo "- wasm sha256: \`${WASM_HASH}\`"
+            echo "- admin (deployer): \`${ADMIN}\` — hand over to the multisig manually"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the deployment
+        env:
+          NETWORK: ${{ inputs.network }}
+          RESOLVER: ${{ inputs.resolver }}
+          TOKEN: ${{ inputs.token }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          jq --arg net "$NETWORK" --arg id "$CONTRACT_ID" --arg hash "$WASM_HASH" \
+             --arg admin "$ADMIN" --arg resolver "$RESOLVER" --arg token "$TOKEN" \
+             --arg commit "$COMMIT" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+             '.deployments[$net] = {contractId: $id, wasmHash: $hash, admin: $admin,
+               resolver: $resolver, token: $token, commit: $commit, deployedAt: $date}' \
+             pvp-escrow/deployments.json > deployments.tmp
+          mv deployments.tmp pvp-escrow/deployments.json
+
+      - name: Open a PR with the registry update
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: deployments/${{ inputs.network }}-${{ github.run_id }}
+          commit-message: "contracts: record pvp-escrow deployment on ${{ inputs.network }}"
+          title: "contracts: record pvp-escrow deployment on ${{ inputs.network }}"
+          body: |
+            Deployed by run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} from ${{ github.sha }}.
+
+            - Contract: `${{ env.CONTRACT_ID }}`
+            - Wasm sha256: `${{ env.WASM_HASH }}`
+            - Admin (deployer, temporary): `${{ env.ADMIN }}`
+
+            Verify the hash with a clean build of the same commit:
+            `cargo build --locked --target wasm32v1-none --release -p pvp-escrow && sha256sum contracts/target/wasm32v1-none/release/pvp_escrow.wasm`
+
+            Admin hand-over to the multisig is a separate, manual step (see contracts/pvp-escrow/docs/upgrade.md).
+          add-paths: contracts/pvp-escrow/deployments.json

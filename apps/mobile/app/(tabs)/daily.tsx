@@ -4,6 +4,7 @@ import { Body, ErrorText, Screen, Title } from '../../src/components/ui';
 import { GuessForm } from '../../src/components/GuessForm';
 import { LyricCard } from '../../src/components/LyricCard';
 import type { DailyView } from '../../src/lib/api';
+import { announceGuessResult } from '../../src/lib/a11y';
 import { hapticForOutcome } from '../../src/lib/haptics';
 import { useSession } from '../../src/lib/session';
 import { spacing } from '../../src/lib/theme';
@@ -32,6 +33,7 @@ export default function Daily() {
     try {
       const result = await api.daily.guess(next.id, guess);
       hapticForOutcome(result.outcome);
+      announceGuessResult(result.outcome, result.points);
       await Promise.all([load(), refreshUser()]);
     } catch (err) {
       setError((err as Error).message);
