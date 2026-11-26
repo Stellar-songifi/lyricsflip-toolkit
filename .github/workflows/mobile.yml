@@ -14,6 +14,16 @@ on:
       - "packages/sdk/**"
       - "package-lock.json"
       - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+    inputs:
+      run_maestro:
+        description: "Run the Maestro Cloud end-to-end flows"
+        type: boolean
+        default: false
+      app_artifact:
+        description: "Path to a built .apk/.ipa in the workspace (plugin output or downloaded artifact)"
+        type: string
+        default: "apps/mobile/.maestro/app.apk"
 
 jobs:
   check:
@@ -46,3 +56,19 @@ jobs:
         env:
           CI: "1"
         run: npx expo export --platform android --output-dir .expo-export
+        run: npx expo export --platform android --output-dir .expo-export
+
+      # E2E needs an installable binary and a running game server in mock mode,
+      # so it is opt-in rather than blocking every pull request.
+      - name: Run Maestro Cloud flows
+        if: github.event_name == 'workflow_dispatch' && inputs.run_maestro
+        env:
+          MAESTRO_CLOUD_API_KEY: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
+          MAESTRO_CLOUD_PROJECT_ID: ${{ secrets.MAESTRO_CLOUD_PROJECT_ID }}
+          APP_ARTIFACT: ${{ inputs.app_artifact }}
+        run: |
+          test -n "$MAESTRO_CLOUD_API_KEY"
+          test -f "$APP_ARTIFACT"
+          npx --yes maestro cloud --api-key "$MAESTRO_CLOUD_API_KEY" \
+            --project-id "$MAESTRO_CLOUD_PROJECT_ID" \
+            "$APP_ARTIFACT" apps/mobile/.maestro

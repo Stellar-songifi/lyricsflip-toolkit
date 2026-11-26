@@ -65,3 +65,6 @@ funds it from testnet friendbot, and signs SEP-10 challenges and stakes locally.
 3. **Keep option B as the fallback** for players who already use a wallet app.
 
 Nothing here changes `pvp-escrow`: `require_auth` already accepts both account and contract signers.
+
+The scoping follow-up (interfaces, on-chain changes, migration and prototype plan) is in
+[`passkey-wallet.md`](passkey-wallet.md).
