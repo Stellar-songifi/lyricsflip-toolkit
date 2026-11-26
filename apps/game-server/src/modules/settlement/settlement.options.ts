@@ -3,11 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { Keypair } from '@stellar/stellar-sdk';
-import type { PvpSettlementOptions } from '@lyricsflip-toolkit/server';
+import { DEFAULTS, type PvpSettlementOptions } from '@lyricsflip-toolkit/server';
 import { AppConfig } from '../../config/configuration';
 import { bearerToken } from '../auth/jwt.config';
 import { resolverSecretProvider } from './resolver-secret.source';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { MetricsService, ReconcileSweepOutcome } from '../../metrics/metrics.service';
 import {
   MetricsService,
   ReconcileSweepOutcome,
@@ -28,6 +29,7 @@ export function settlementOptions(
 ): PvpSettlementOptions {
   const stellar = config.get('stellar', { infer: true });
   const sep10 = config.get('sep10', { infer: true });
+  metrics.setReconcileInterval(DEFAULTS.reconcileIntervalSeconds);
 
   let signingSecret = sep10.signingSecret;
   if (!signingSecret) {
@@ -80,6 +82,11 @@ export function settlementOptions(
       }) => {
         metrics.observeReconcileSweep(outcome, durationSeconds);
       },
+      onReconcileExhausted: () => {
+        metrics.observeReconcileAttemptsExhausted();
+      },
+    },
+  } as PvpSettlementOptions;
     },
   } as PvpSettlementOptions;
 }

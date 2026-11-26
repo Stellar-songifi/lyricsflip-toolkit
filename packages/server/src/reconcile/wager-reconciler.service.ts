@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DEFAULTS, PVP_SETTLEMENT_OPTIONS, PvpSettlementOptions } from '../options';
+import { WagerStatus } from '../wager/wager.entity';
 import { StellarService } from '../stellar/stellar.service';
 import { WagerService } from '../wager/wager.service';
 
@@ -87,7 +88,12 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
         await runner.query('SELECT pg_advisory_unlock($1)', [RECONCILE_LOCK_KEY]);
       }
     } catch (err) {
-      this.logger.error('Wager reconcile sweep failed', (err as Error).stack);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error({
+        message: 'Wager reconcile sweep failed',
+        event: 'reconciliation.sweep.failed',
+        error: { name: error.name, message: error.message, stack: error.stack },
+      });
     } finally {
       if (!runner.isReleased) await runner.release();
       const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
@@ -147,6 +153,31 @@ export class WagerReconcilerService implements OnApplicationBootstrap, OnModuleD
         if (after.status !== wager.status) {
           this.logger.log(`Wager ${wager.id}: ${wager.status} → ${after.status}`);
         }
+        const exhausted =
+          after.status === WagerStatus.FAILED
+            ? /^Settlement did not land after (\d+) attempts$/.exec(after.failureReason ?? '')
+            : null;
+        if (exhausted) {
+          const attempts = Number(exhausted[1]);
+          this.logger.error({
+            message: 'Wager exhausted reconciliation attempts',
+            event: 'reconciliation.exhausted',
+            wagerId: after.id,
+            attempts,
+            failureReason: after.failureReason,
+          });
+          try {
+            this.options.observability?.onReconcileExhausted?.({
+              wagerId: after.id,
+              attempts,
+              failureReason: after.failureReason as string,
+            });
+          } catch (err) {
+            this.logger.warn(`Reconcile exhaustion observer threw: ${(err as Error).message}`);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Reconcile of wager ${wager.id} threw: ${(err as Error).message}`);
       }
     };
 

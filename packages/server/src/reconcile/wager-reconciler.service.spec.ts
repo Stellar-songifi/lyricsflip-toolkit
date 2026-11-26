@@ -5,6 +5,14 @@ jest.mock("../wager/wager.service", () => ({ WagerService: class {} }));
 
 describe("WagerReconcilerService metrics", () => {
   const observations = jest.fn();
+  const exhausted = jest.fn();
+  const options: PvpSettlementOptions = {
+    mode: "mock",
+    authenticate: () => null,
+    observability: {
+      onReconcileSweep: observations,
+      onReconcileExhausted: exhausted,
+    },
   const options: PvpSettlementOptions = {
     mode: "mock",
     authenticate: () => null,
@@ -59,6 +67,42 @@ describe("WagerReconcilerService metrics", () => {
     expect(observations).toHaveBeenCalledWith({
       outcome: "failed",
       durationSeconds: expect.any(Number),
+    });
+  });
+
+  it("reports a wager that exhausted its reconciliation attempts exactly once", async () => {
+    const runner = {
+      connect: jest.fn(),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ locked: true }])
+        .mockResolvedValueOnce(undefined),
+      release: jest.fn(),
+      isReleased: false,
+    };
+    const wagers = {
+      findNeedingAttention: jest
+        .fn()
+        .mockResolvedValue([{ id: "wager-1", status: "settling" }]),
+      reconcile: jest.fn().mockResolvedValue({
+        id: "wager-1",
+        status: "failed",
+        failureReason: "Settlement did not land after 8 attempts",
+      }),
+    };
+    const reconciler = new WagerReconcilerService(
+      wagers as never,
+      { createQueryRunner: () => runner } as never,
+      options,
+    );
+
+    await reconciler.sweep();
+
+    expect(exhausted).toHaveBeenCalledTimes(1);
+    expect(exhausted).toHaveBeenCalledWith({
+      wagerId: "wager-1",
+      attempts: 8,
+      failureReason: "Settlement did not land after 8 attempts",
     });
   });
 });

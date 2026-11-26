@@ -23,6 +23,9 @@ export class MetricsService {
   private readonly settlementDuration: Histogram<'outcome'>;
   private readonly reconcileSweeps: Counter<'outcome'>;
   private readonly reconcileSweepDuration: Histogram<'outcome'>;
+  private readonly reconcileAttemptsExhausted: Counter;
+  private readonly reconcileSweepLastSuccess: Gauge;
+  private readonly reconcileInterval: Gauge;
 
   constructor(
     @InjectRepository(GameSession)
@@ -75,6 +78,21 @@ export class MetricsService {
       buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
       registers: [this.registry],
     });
+    this.reconcileAttemptsExhausted = new Counter({
+      name: 'lyricsflip_reconcile_attempts_exhausted_total',
+      help: 'Wagers that exhausted every reconciliation attempt.',
+      registers: [this.registry],
+    });
+    this.reconcileSweepLastSuccess = new Gauge({
+      name: 'lyricsflip_reconcile_sweep_last_success_timestamp_seconds',
+      help: 'Unix timestamp of the last successful lock-owning reconciliation sweep.',
+      registers: [this.registry],
+    });
+    this.reconcileInterval = new Gauge({
+      name: 'lyricsflip_reconcile_interval_seconds',
+      help: 'Configured interval between reconciliation sweeps.',
+      registers: [this.registry],
+    });
   }
 
   observeHttpRequest(
@@ -96,6 +114,15 @@ export class MetricsService {
   observeReconcileSweep(outcome: ReconcileSweepOutcome, durationSeconds: number): void {
     this.reconcileSweeps.inc({ outcome });
     this.reconcileSweepDuration.observe({ outcome }, durationSeconds);
+    if (outcome === 'success') this.reconcileSweepLastSuccess.setToCurrentTime();
+  }
+
+  observeReconcileAttemptsExhausted(): void {
+    this.reconcileAttemptsExhausted.inc();
+  }
+
+  setReconcileInterval(seconds: number): void {
+    this.reconcileInterval.set(seconds);
   }
 
   async render(): Promise<string> {

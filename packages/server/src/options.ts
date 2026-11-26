@@ -84,6 +84,17 @@ export interface ReconcileSweepObservation {
   durationSeconds: number;
 }
 
+export interface ReconcileExhaustedObservation {
+  wagerId: string;
+  attempts: number;
+  failureReason: string;
+}
+
+export interface PvpObservabilityOptions {
+  /** Called after each reconciliation sweep. Observer errors are ignored. */
+  onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
+  /** Called once when a wager exhausts its settlement reconciliation attempts. */
+  onReconcileExhausted?: (observation: ReconcileExhaustedObservation) => void;
 export interface PvpObservabilityOptions {
   /** Called after each reconciliation sweep. Observer errors are ignored. */
   onReconcileSweep?: (observation: ReconcileSweepObservation) => void;
