@@ -487,6 +487,15 @@ export class GameService {
     }
 
     if (justFinished) {
+      // Reload after commit so settlement uses the canonical finished scores.
+      const finishedSession = await this.getSession(sessionId);
+      const finished: SessionFinishedEvent = {
+        sessionId,
+        mode: finishedSession.mode,
+        playerIds: [...finishedSession.playerIds],
+        scores: { ...finishedSession.scores },
+      };
+      this.eventEmitter.emit('game.session.finished', finished);
       const finished: SessionFinishedEvent = {
         sessionId,
       await this.sessionsRepository.update(
