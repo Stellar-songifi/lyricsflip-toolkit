@@ -129,11 +129,39 @@ lyricsflip-toolkit/
 ### Prerequisites
 
 - Node.js 22.12+ (`@stellar/stellar-sdk` 17 requires it)
-- PostgreSQL 14+
+- PostgreSQL 14+ (or Docker Compose, see [Local services](#local-services))
 - For contract work: Rust (see `.tool-versions`), the `wasm32v1-none` target, and the
   [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli)
 - For Stellar integration tests: Docker, to run `stellar/quickstart` locally
 - For mobile: the Expo toolchain, and Expo Go or an iOS simulator / Android emulator
+
+### Local services
+
+The repo ships a [`docker-compose.yml`](docker-compose.yml) that mirrors what CI runs, so you don't
+have to reconstruct the setup from `.github/workflows/node.yml` and `integration.yml` by hand.
+
+Start Postgres (the same image and version as `node.yml`):
+
+```bash
+docker compose up -d
+```
+
+This exposes Postgres on `localhost:5432` with user `postgres`, password `postgres` and database
+`lyricsflip_test`, which matches the defaults used by `PVP_TEST_DATABASE_URL` and
+`E2E_DATABASE_URL`. Point those variables at it (or leave them unset to use the defaults) and
+`npm test` / `npm run test:e2e` work with no further setup.
+
+For the Stellar integration tests, also start the local network (the same `stellar/quickstart`
+setup as `integration.yml`):
+
+```bash
+docker compose --profile stellar up -d
+```
+
+This serves the local Stellar RPC on `http://localhost:8000/soroban/rpc` and Horizon on
+`http://localhost:8000`, which is what `npm run test:integration -w @lyricsflip-toolkit/server`
+expects. Stop everything with `docker compose down` (add `-v` to drop the Postgres volume).
+=======
 
 ### Clone and build
 
@@ -201,6 +229,7 @@ Full setup, including env variables and testnet deployment, is in
 - Custodial mode is refused on Stellar mainnet.
 
 Read [`docs/threat-model.md`](docs/threat-model.md) for what the toolkit does and does not protect against.
+To report a vulnerability privately, follow [`SECURITY.md`](SECURITY.md).
 
 ## When to use something else
 
@@ -213,6 +242,7 @@ See [`docs/alternatives.md`](docs/alternatives.md).
 - [`docs/architecture.md`](docs/architecture.md) — components and the wager lifecycle
 - [`docs/integration-guide.md`](docs/integration-guide.md) — add stakes to your own game
 - [`docs/threat-model.md`](docs/threat-model.md) — trust assumptions and attack scenarios
+- [`SECURITY.md`](SECURITY.md) — supported versions and how to report a vulnerability privately
 - [`docs/alternatives.md`](docs/alternatives.md) — other Stellar escrow options
 - [`docs/mobile.md`](docs/mobile.md) — the Expo app
 - [`docs/wallet-spike.md`](docs/wallet-spike.md) — mobile wallet options (passkeys and others)

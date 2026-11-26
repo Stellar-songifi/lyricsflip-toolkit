@@ -1,10 +1,12 @@
 [package]
 name = "pvp-escrow"
+# 0.2.0: adds pause/unpause/upgrade entry points and Error::Paused; storage is
+# unchanged (one new instance key). See CHANGELOG.md and docs/upgrade.md.
 # 0.1.1: additive event schema change — `Staked` gained `stake_amount` and
 # `Refunded` gained `player_a_amount` / `player_b_amount`. Storage and entry
 # points are unchanged, so this is not a breaking upgrade for callers; only
 # indexers gain fields. See CHANGELOG.md.
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 publish = false
 license = "MIT"
@@ -17,6 +19,7 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+proptest = { version = "1.5", default-features = false, features = ["std"] }
 
 [features]
 testutils = ["soroban-sdk/testutils"]

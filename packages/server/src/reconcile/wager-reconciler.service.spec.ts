@@ -13,6 +13,10 @@ describe("WagerReconcilerService metrics", () => {
       onReconcileSweep: observations,
       onReconcileExhausted: exhausted,
     },
+  const options: PvpSettlementOptions = {
+    mode: "mock",
+    authenticate: () => null,
+    observability: { onReconcileSweep: observations },
   };
 
   beforeEach(() => jest.clearAllMocks());

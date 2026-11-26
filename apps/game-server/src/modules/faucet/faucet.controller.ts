@@ -1,5 +1,6 @@
 import { Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUserId } from '../auth/decorators/current-user.decorator';
 import { FaucetService } from './faucet.service';
@@ -17,6 +18,8 @@ export class FaucetController {
     return this.faucet.info();
   }
 
+  /** Strict limit: faucet claims are expensive and must not be flooded. */
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @Post()
   claim(@CurrentUserId() userId: string) {
     return this.faucet.claim(userId);

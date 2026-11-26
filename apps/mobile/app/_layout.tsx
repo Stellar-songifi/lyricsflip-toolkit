@@ -1,13 +1,24 @@
 import '../src/lib/polyfills';
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
+import * as Sentry from '@sentry/react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ErrorBoundary } from '../src/components/ErrorBoundary';
+import { OfflineBanner } from '../src/components/OfflineBanner';
 import { SessionProvider, useSession } from '../src/lib/session';
 import { linkFromNotification, registerForPush } from '../src/lib/push';
 import { pathFromLink } from '../src/lib/links';
 import { colors } from '../src/lib/theme';
+
+// Without a DSN the SDK is a no-op; native crash handling is enabled by the
+// Expo plugin in app.json.
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  tracesSampleRate: 0.2,
+  enableNativeCrashHandling: true,
+});
 
 /** Sends signed-out players to sign-in, and handles push registration and taps. */
 function Gate() {
@@ -50,6 +61,7 @@ function Gate() {
       <Stack.Screen name="challenge/[code]" options={{ title: 'Challenge' }} />
       <Stack.Screen name="match/[id]" options={{ title: 'Match' }} />
       <Stack.Screen name="results/[id]" options={{ title: 'Results' }} />
+      <Stack.Screen name="match-history" options={{ title: 'Match history' }} />
     </Stack>
   );
 }
@@ -57,10 +69,13 @@ function Gate() {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <SessionProvider>
-        <StatusBar style="light" />
-        <Gate />
-      </SessionProvider>
+      <ErrorBoundary>
+        <OfflineBanner />
+        <SessionProvider>
+          <StatusBar style="light" />
+          <Gate />
+        </SessionProvider>
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }

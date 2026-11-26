@@ -21,10 +21,12 @@ export class Challenge {
   @Column({ length: 8 })
   code: string;
 
+  @Index()
   @Column({ type: 'uuid' })
   hostUserId: string;
 
   /** If set, only this user may accept (they were invited directly). */
+  @Index()
   @Column({ type: 'uuid', nullable: true })
   invitedUserId: string | null;
 

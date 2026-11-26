@@ -19,6 +19,7 @@ import { MetricsService, SettlementOutcome } from '../../metrics/metrics.service
 @Injectable()
 export class SettlementListener {
   private readonly logger = new Logger(SettlementListener.name);
+  public enabled = true;
 
   constructor(
     private readonly wagers: WagerService,
@@ -28,6 +29,7 @@ export class SettlementListener {
 
   @OnEvent('game.session.finished', { async: true, promisify: true })
   async onSessionFinished(event: SessionFinishedEvent): Promise<void> {
+    if (!this.enabled) return;
     if (event.mode !== GameMode.HEAD_TO_HEAD) return;
     const startedAt = process.hrtime.bigint();
     try {
@@ -36,6 +38,7 @@ export class SettlementListener {
       if (wager) {
         const outcome = settlementOutcome(wager.status);
         if (outcome) this.recordSettlement(outcome, startedAt);
+        this.logger.log(`Session ${event.sessionId} settled: wager ${wager.id} is ${wager.status}`);
         this.logger.log({
           message: 'Session settlement completed',
           event: 'settlement.completed',
