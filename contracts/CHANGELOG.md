@@ -4,6 +4,30 @@ Notable changes to the contracts in this workspace. The crate version in each
 `Cargo.toml` tracks the deployed Wasm, so a bump here is what tells operators a
 redeploy is needed.
 
+## pvp-escrow 0.2.0 (admin hand-over and platform fee)
+
+### Changed (breaking for admin tooling)
+
+- **Two-step admin transfer.** `set_admin` is replaced by
+  `propose_admin(new_admin)` (admin only; authority doesn't move) and
+  `accept_admin()` (signed by the candidate). `RoleChanged { admin }` is
+  published only on `accept_admin`; `propose_admin` publishes
+  `AdminProposed`. A mistyped address can no longer lock the admin out.
+  New: `pending_admin()`, `Error::NoPendingAdmin` (18).
+
+### Added
+
+- **Optional platform fee.** `set_fee(fee_bps, fee_recipient)` (admin only,
+  capped at `MAX_FEE_BPS` = 1,000 bps). `resolve` pays
+  `pot_total - fee` to the winner and `fee = floor(pot_total × fee_bps /
+  10,000)` to the recipient, so the two transfers always sum to exactly the
+  pot. The default is 0, which pays the whole pot as before.
+  `Resolved` gains `fee` and `fee_recipient`; `Config` (and `get_config`)
+  gains `fee_bps` and `fee_recipient`; new `FeeChanged` event and
+  `Error::InvalidFee` (19). Error 17 is left for `Paused` (#73).
+- **Model-based property test** (`proptest`, 256 cases, fixed seed) over random
+  call sequences, checking balance, status and conservation invariants after
+  every step.
 ## pvp-escrow 0.2.0
 
 ### Added
