@@ -30,6 +30,11 @@ interface SubmitGuessPayload {
  * The session payloads mirror the HTTP ones and include `totalRounds`, the
  * round the session finishes at. `guessResult` carries it too, and
  * `sessionFinished` repeats it so a client can show the final "round N of N".
+ *
+ * In head-to-head and room sessions a round only advances once every player
+ * has answered. `guessResult` and `scoreUpdate` therefore carry a
+ * `waitingForOpponent` flag so a client that has already answered knows the
+ * round is not over yet and it should wait for the next `lyric`.
  */
 @WebSocketGateway({
   namespace: '/game',
@@ -69,11 +74,13 @@ export class GameGateway implements OnGatewayConnection {
   async handleSubmitGuess(@MessageBody() payload: SubmitGuessPayload, @ConnectedSocket() client: Socket) {
     const userId = this.userId(client);
     const result = await this.gameService.submitGuess(payload.sessionId, userId, payload.guess);
-    client.emit('guessResult', result);
+    const waitingForOpponent = result.waitingForOpponent === true;
+    client.emit('guessResult', { ...result, waitingForOpponent });
     this.server.to(payload.sessionId).emit('scoreUpdate', {
       sessionId: payload.sessionId,
       userId,
       pointsAwarded: result.pointsAwarded,
+      waitingForOpponent,
     });
     if (result.nextLyric) {
       this.server.to(payload.sessionId).emit('lyric', result.nextLyric);
