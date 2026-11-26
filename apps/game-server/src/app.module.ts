@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import configuration, { AppConfig } from './config/configuration';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -29,6 +31,21 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     EventEmitterModule.forRoot(),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService<AppConfig, true>) => {
+        const throttle = configService.get('throttle', { infer: true });
+        return {
+          throttlers: [
+            {
+              name: 'default',
+              ttl: throttle.default.ttl * 1000,
+              limit: throttle.default.limit,
+            },
+          ],
+        };
+      },
+    }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService<AppConfig, true>) => {
@@ -77,6 +94,12 @@ import { DailyAttempt } from './modules/daily/entities/daily-attempt.entity';
     ChallengesModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

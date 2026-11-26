@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -64,6 +65,8 @@ export interface CreateSessionOptions {
  */
 @Injectable()
 export class GameService {
+  private readonly logger = new Logger(GameService.name);
+
   constructor(
     @InjectRepository(GameSession)
     private readonly sessionsRepository: Repository<GameSession>,
@@ -72,6 +75,22 @@ export class GameService {
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AppConfig, true>,
   ) {}
+
+  /**
+   * Warns at boot when the lyric pool is smaller than a default session, so a
+   * fresh install with a handful of seeded lyrics is visible in the logs
+   * before a game crashes mid-round (issue #37).
+   */
+  async onModuleInit(): Promise<void> {
+    const roundsPerSession = this.configService.get('roundsPerSession', { infer: true });
+    const available = await this.lyricsService.count();
+    if (available < roundsPerSession) {
+      this.logger.warn(
+        `Lyric pool has ${available} lyrics but ROUNDS_PER_SESSION is ${roundsPerSession}; ` +
+          'sessions may finish early or be refused.',
+      );
+    }
+  }
 
   /**
    * Starts a session. With `waitForStakes`, it stays `waiting` until
@@ -95,6 +114,13 @@ export class GameService {
     }
     const totalRounds =
       options.rounds ?? this.configService.get('roundsPerSession', { infer: true });
+
+    const available = await this.lyricsService.count();
+    if (available < totalRounds) {
+      throw new BadRequestException(
+        `Not enough lyrics for a ${totalRounds}-round session (only ${available} available)`,
+      );
+    }
 
     const lyric = await this.lyricsService.getRandom();
 
@@ -233,6 +259,40 @@ export class GameService {
 
       let nextLyric: PublicLyric | null = null;
       let justFinished = false;
+      if (session.currentRound >= session.totalRounds) {
+        // A conditional update, not an unconditional save()
+        session.status = GameSessionStatus.FINISHED;
+        justFinished = true;
+      } else {
+        // Guard against a shrinking pool: if no unseen lyric is left, finish
+        // the session early instead of letting getRandom throw mid-game
+        // (issue #37).
+        const next = await this.lyricsService.getRandom(session.seenLyricIds);
+        if (!next) {
+          session.status = GameSessionStatus.FINISHED;
+          justFinished = true;
+        } else {
+          session.currentLyricId = next.id;
+          session.currentRound += 1;
+          session.seenLyricIds = [...session.seenLyricIds, next.id];
+          nextLyric = toPublicLyric(next);
+        }
+      }
+
+      await manager.save(session);
+
+      return {
+        session,
+        nextLyric,
+        justFinished,
+        pointsAwarded: finalPoints,
+        streak: session.currentStreak[userId] ?? 0,
+      };
+    });
+
+    const { session, nextLyric, justFinished, pointsAwarded, streak } = locked;
+
+    if (justFinished) {
       let waitingForOpponent = false;
       if (!allAnswered) {
         // Other players still owe an answer for this card; keep the round
@@ -292,6 +352,9 @@ export class GameService {
     }
 
     return {
+      outcome: GuessOutcome.CORRECT,
+      pointsAwarded,
+      streak,
       outcome: finalOutcome,
       pointsAwarded: finalPoints,
       streak: session.currentStreak[scoredUserId] ?? 0,

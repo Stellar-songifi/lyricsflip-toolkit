@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
   ConnectedSocket,
@@ -31,6 +32,9 @@ interface SubmitGuessPayload {
  * round the session finishes at. `guessResult` carries it too, and
  * `sessionFinished` repeats it so a client can show the final "round N of N".
  *
+ * CORS is enforced in `handleConnection` from the same `corsOrigin` value the
+ * HTTP API uses: handshakes from a disallowed `Origin` are refused, while
+ * native clients (which send no `Origin`) are allowed.
  * In head-to-head and room sessions a round only advances once every player
  * has answered. `guessResult` and `scoreUpdate` therefore carry a
  * `waitingForOpponent` flag so a client that has already answered knows the
@@ -38,10 +42,10 @@ interface SubmitGuessPayload {
  */
 @WebSocketGateway({
   namespace: '/game',
-  cors: { origin: true, credentials: true },
 })
 export class GameGateway implements OnGatewayConnection {
   private readonly logger = new Logger(GameGateway.name);
+  private readonly allowedOrigins: string[];
 
   @WebSocketServer()
   server: Server;
@@ -49,9 +53,21 @@ export class GameGateway implements OnGatewayConnection {
   constructor(
     private readonly gameService: GameService,
     private readonly jwt: JwtService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.allowedOrigins = (config.get<string>('corsOrigin') ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0);
+  }
 
   handleConnection(client: Socket): void {
+    if (!this.isOriginAllowed(client)) {
+      this.logger.debug(`Rejected a socket from disallowed origin: ${client.handshake.headers?.origin}`);
+      client.emit('error', { message: 'Origin not allowed' });
+      client.disconnect(true);
+      return;
+    }
     const userId = this.authenticate(client);
     if (!userId) {
       client.emit('error', { message: 'Unauthorized' });
@@ -59,6 +75,13 @@ export class GameGateway implements OnGatewayConnection {
       return;
     }
     client.data.userId = userId;
+  }
+
+  private isOriginAllowed(client: Socket): boolean {
+    const origin = client.handshake.headers?.origin;
+    // Native apps send no Origin header; allow them.
+    if (!origin) return true;
+    return this.allowedOrigins.includes(origin);
   }
 
   @SubscribeMessage('requestLyric')
